@@ -8,7 +8,7 @@ _Round 3 revision after Codex review. What changed each round is in the review l
 
 **Architecture:** A single entry skill under `~/.claude/skills/dstack/` with routing, the canonical stop-rule block and the mandatory triad in `SKILL.md`, and three reference files loaded on demand: the full stage contract (which also carries each stage's exact pre-flight requirements), the PR evidence template, and the class rule. Every stage reads and writes `.dstack/state.json` at the lane root; Intake creates it and every stage after checks its predecessor's recorded state, so no stage can be entered from memory. Plans live where the house convention puts them, `docs/superpowers/plans/`, and Plan commits them, so Build's clean-tree gate is honest. Stages whose code is not built yet (the three-wide runner, See it, Watch, Retro) write an explicit `not_built` state with a note that reaches the PR body, and Watch reports `unknown`, never green, until it exists. The gate is invoked in a way that cannot merge.
 
-**Tech Stack:** Markdown skill files and one Node verifier, `scripts/verify.cjs`, which parses the routing table row by row as `(number, name, command)` tuples, parses the stage contract's headings and per-line fields, and compares the stop-rule block between the two files byte for byte. YAML for the 4-brain frontmatter check is parsed with the `yaml` package resolved from the PFP repo's `node_modules` (no install).
+**Tech Stack:** Markdown skill files and one Node verifier, `scripts/verify.cjs`, which parses the routing table row by row as `(number, name, command)` tuples, parses the stage contract's headings and per-line fields, and compares the stop-rule block between the two files byte for byte. YAML for the 4-brain frontmatter check is parsed with the `yaml` package, declared as this repository's only devDependency and installed into this repository's own `node_modules` by Task 0. It shares nothing with any other project.
 
 **Claim, in the owner's words:** "When I ask for a change, I get a plan I can say yes to before any code exists, then a PR whose body tells me the claim, what was proved and on which commit, the gate verdict, what I would see on screen, the ticket it closes or why it cannot, the risks, and how to undo it. Nothing merges until I say so, and the gate cannot merge on its own."
 
@@ -16,7 +16,7 @@ _Round 3 revision after Codex review. What changed each round is in the review l
 
 **Out of scope for this plan:** the mutation ledger writer (Plan 2), the three-wide runner (Plan 3), the browser stage (Plan 4), the deploy watch (Plan 5), retro metrics (Plan 6). Each exists here as a routed command that records `not_built` and names what ran instead. Also out of scope: judging whether a plan's prose is vague. Pre-flight checks that named sections exist and are non-empty; it cannot judge quality, and does not claim to.
 
-**Proof command:** `node ~/.claude/skills/dstack/scripts/verify.cjs`, exit 0 on the files exactly as written here, after Task 5 Step 3 has shown it exit 1 on each of five deliberate breaks.
+**Proof command:** `cd skill && node scripts/verify.cjs`, exit 0 on the files exactly as written here, after Task 5 Step 3 has shown it exit 1 on each of five deliberate breaks.
 
 **What the verifier does and does not guarantee, said plainly:** identical canonical stop-rule blocks prevent the two files from drifting apart inside those blocks. They do not prevent someone weakening both copies identically, or writing stage prose that contradicts a rule. That is what Plan review and the owner's yes are for.
 
@@ -24,25 +24,88 @@ _Round 3 revision after Codex review. What changed each round is in the review l
 
 ## File structure
 
-```
-~/.claude/skills/dstack/
-├── SKILL.md                  entry point: routing table, canonical stop rules, state file, triad
-├── references/
-│   ├── stages.md             the contract per stage: who, needs (the exact pre-flight), produces, owner reads, stop
-│   ├── pr-evidence.md        the PR body template every Dstack PR carries
-│   └── class-rule.md         the checklist run before any finding is fixed
-└── scripts/
-    └── verify.cjs            structural self-check; Task 5
+Every task in this plan is built inside the **dstack repository** at `C:/Users/Owner/Desktop/Claude Code Projects/dstack` (https://github.com/DevinRobinson1/dstack), not directly in `~/.claude/skills`. The repository is the source of truth and the skill directory becomes a link into it, created by the installer in Task 8. Building here is what turns the work into a diff somebody can review before it is live.
+
+Run every command in this plan from the repository root, and export the 4-brain repository path once for Task 6:
+
+```bash
+cd "C:/Users/Owner/Desktop/Claude Code Projects/dstack"
+export FOURBRAIN="C:/Users/Owner/Desktop/Claude Code Projects/4-brain"
 ```
 
+```
+dstack/
+├── README.md                      built (scaffold commit)
+├── LICENSE, .gitattributes        built
+├── install.sh / install.ps1       built: link skill/ into ~/.claude/skills/dstack, probe CLIs, run the verifier
+├── dstack.config.example.json     built: the engine/context split
+├── package.json                   Task 0: one devDependency, `yaml`
+├── docs/plans/                    this plan and its review log
+└── skill/                         TASKS 1 TO 5 BUILD EVERYTHING BELOW
+    ├── SKILL.md                   entry point: routing table, canonical stop rules, state file, triad
+    ├── references/
+    │   ├── stages.md              the contract per stage: who, needs (the exact pre-flight), produces, owner reads, stop
+    │   ├── pr-evidence.md         the PR body template every Dstack PR carries
+    │   └── class-rule.md          the checklist run before any finding is fixed
+    └── scripts/
+        └── verify.cjs             structural self-check; Task 5
+```
+
+Both installers already refuse to run while `skill/SKILL.md` is absent, so nobody can install a half-built process by accident. Task 8 is what makes the install real.
+
 `SKILL.md` stays under 1,600 words; the per-stage pre-flight detail lives in `stages.md` under each stage's `Needs`, and SKILL.md's pre-flight says to read it. The state file `.dstack/state.json` lives at the root of the lane worktree, is excluded by appending `.dstack/` to the file `git rev-parse --git-path info/exclude` names (in a linked worktree that resolves into the main repository's git directory, so the exclusion is repository-wide; never a repo `.gitignore` edit), and is the single authoritative record of where a change is.
+
+---
+
+### Task 0: The one dependency
+
+**Files:**
+- Create: `package.json`
+
+Task 6 parses 4-brain's YAML frontmatter, which needs a real YAML parser. It gets one here, in this repository's own `node_modules`, so nothing reaches into another project.
+
+- [ ] **Step 1: Write `package.json`**
+
+```json
+{
+  "name": "dstack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nine stages, one command, and readable evidence at every gate.",
+  "license": "MIT",
+  "scripts": {
+    "verify": "cd skill && node scripts/verify.cjs"
+  },
+  "devDependencies": {
+    "yaml": "^2.5.0"
+  }
+}
+```
+
+- [ ] **Step 2: Install it and prove the parser resolves**
+
+Run:
+```bash
+npm install && node -e 'const Y=require("yaml");console.log("yaml OK:",Y.parse("a: 1").a)'
+```
+Expected: an npm summary, then `yaml OK: 1`.
+
+This install is safe and is the one exception to the house no-install rule: this repository has its own `node_modules`, shares nothing with the PFP gates, and `node_modules/` is already in `.gitignore`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add package.json package-lock.json && git commit -m "build: one devDependency, a real YAML parser for the 4-brain check
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
 
 ---
 
 ### Task 1: The entry skill
 
 **Files:**
-- Create: `~/.claude/skills/dstack/SKILL.md`
+- Create: `skill/SKILL.md`
 
 - [ ] **Step 1: Write the skill file exactly as below**
 
@@ -188,7 +251,7 @@ No em dashes anywhere: not in code, comments, tests, PR bodies, or this file. Pe
 
 Run:
 ```bash
-cd ~/.claude/skills/dstack && node -e '
+cd skill && node -e '
 const fs=require("fs");const s=fs.readFileSync("SKILL.md","utf8");
 const m=s.match(/^description:\s*(.+)$/m);if(!m)throw new Error("no description");
 const d=m[1];console.log("chars:",d.length,"words:",s.split(/\s+/).length);
@@ -204,14 +267,14 @@ Expected: `chars: 270 words: <n under 1600>` then `description and length OK`.
 
 Run:
 ```bash
-cd ~/.claude/skills/dstack && node -e 'const s=require("fs").readFileSync("SKILL.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
+cd skill && node -e 'const s=require("fs").readFileSync("SKILL.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
 ```
 Expected: `em dashes: 0`
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/.claude && git add skills/dstack/SKILL.md && git commit -m "feat(dstack): the entry skill, nine stages, canonical stop rules, state file
+git add skill/SKILL.md && git commit -m "feat(dstack): the entry skill, nine stages, canonical stop rules, state file
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -221,7 +284,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 2: The stage contract
 
 **Files:**
-- Create: `~/.claude/skills/dstack/references/stages.md`
+- Create: `skill/references/stages.md`
 
 Every field (`**Who:**`, `**Needs:**`, `**Produces:**`, `**Owner reads:**`, `**Stop:**`) is one line with its value on that same line; the verifier reads them line by line. `Needs` is the exact pre-flight for that stage. `Stop` names S-rules, or `none`, or begins `see ` and points to the clause that blocks.
 
@@ -366,14 +429,14 @@ Canonical. Identical to SKILL.md's block; the verifier fails if they differ.
 
 Run:
 ```bash
-cd ~/.claude/skills/dstack && node -e 'const s=require("fs").readFileSync("references/stages.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
+cd skill && node -e 'const s=require("fs").readFileSync("references/stages.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
 ```
 Expected: `em dashes: 0`
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude && git add skills/dstack/references/stages.md && git commit -m "feat(dstack): the full contract per stage, exact pre-flight, canonical stop rules
+git add skill/references/stages.md && git commit -m "feat(dstack): the full contract per stage, exact pre-flight, canonical stop rules
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -383,7 +446,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 3: The PR evidence template
 
 **Files:**
-- Create: `~/.claude/skills/dstack/references/pr-evidence.md`
+- Create: `skill/references/pr-evidence.md`
 
 - [ ] **Step 1: Write the reference exactly as below**
 
@@ -457,14 +520,14 @@ Rules:
 
 Run:
 ```bash
-cd ~/.claude/skills/dstack && node -e 'const s=require("fs").readFileSync("references/pr-evidence.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
+cd skill && node -e 'const s=require("fs").readFileSync("references/pr-evidence.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
 ```
 Expected: `em dashes: 0`
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude && git add skills/dstack/references/pr-evidence.md && git commit -m "feat(dstack): the PR body every change carries, all nine stages, risks and evidence links
+git add skill/references/pr-evidence.md && git commit -m "feat(dstack): the PR body every change carries, all nine stages, risks and evidence links
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -474,7 +537,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 4: The class rule
 
 **Files:**
-- Create: `~/.claude/skills/dstack/references/class-rule.md`
+- Create: `skill/references/class-rule.md`
 
 - [ ] **Step 1: Write the reference exactly as below**
 
@@ -502,14 +565,14 @@ The stop rule this feeds is S3: two consecutive real rounds where the major coun
 
 Run:
 ```bash
-cd ~/.claude/skills/dstack && node -e 'const s=require("fs").readFileSync("references/class-rule.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
+cd skill && node -e 'const s=require("fs").readFileSync("references/class-rule.md","utf8");const n=(s.match(/\u2014/g)||[]).length;console.log("em dashes:",n);process.exit(n?1:0)'
 ```
 Expected: `em dashes: 0`
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude && git add skills/dstack/references/class-rule.md && git commit -m "feat(dstack): the class rule, run before any finding is fixed
+git add skill/references/class-rule.md && git commit -m "feat(dstack): the class rule, run before any finding is fixed
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -519,7 +582,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 5: The proof for this plan
 
 **Files:**
-- Create: `~/.claude/skills/dstack/scripts/verify.cjs`
+- Create: `skill/scripts/verify.cjs`
 
 The proof is structural: every routing row is checked as a `(number, name, command)` tuple; every contract section has its five fields each with a value on the same line; the stop-rule block is byte-identical in both files; the triad sections exist and are non-empty; the description is strictly under 300 characters; the PR template and the state example name every stage. Step 3 breaks it five ways and watches it fail each time, then restores and watches it pass. All line endings are normalized before any parsing.
 
@@ -648,17 +711,19 @@ report();
 
 - [ ] **Step 2: Run it and see it pass on the files exactly as written in Tasks 1 to 4**
 
-Run: `node ~/.claude/skills/dstack/scripts/verify.cjs`
+Run: `cd skill && node scripts/verify.cjs`
 Expected: `Dstack skill check OK: 4 files, description 270 chars, SKILL.md <n under 1600> words, 9 stages routed and contracted, stop rules identical`
 
 If this does not pass on the unmodified files, the plan is wrong, not the files: stop and report which line, do not edit the files to make it pass.
+
+Tasks 1 to 6 are built and proven with the wording exactly as given. Task 7 changes that wording and re-runs this verifier and all five breaks afterwards. Do not reorder them: Break 2 and Break 5 quote strings that Task 7 edits.
 
 - [ ] **Step 3: Break it five ways and watch each one fail, then restore and watch it pass**
 
 Every mutation normalizes line endings first and asserts its anchor was found, so a break fails for the reason named and not by accident.
 
 ```bash
-cd ~/.claude/skills/dstack && cp SKILL.md /tmp/SKILL.bak && cp references/stages.md /tmp/stages.bak
+cd skill && cp SKILL.md /tmp/SKILL.bak && cp references/stages.md /tmp/stages.bak
 
 # Break 1: swap the Plan and Build command cells (both routes still exist, but on the wrong rows).
 node -e 'const fs=require("fs");let s=fs.readFileSync("SKILL.md","utf8").replace(/\r\n/g,"\n");if(!s.includes("`/dstack plan`")||!s.includes("`/dstack build`"))throw new Error("anchor");s=s.replace("`/dstack plan`","`/dstack TEMP`").replace("`/dstack build`","`/dstack plan`").replace("`/dstack TEMP`","`/dstack build`");fs.writeFileSync("SKILL.md",s)'
@@ -688,7 +753,7 @@ Expected, in order: `SKILL.md: row 2 routes to \`/dstack build\`, expected \`/ds
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/.claude && git add skills/dstack/scripts/verify.cjs && git commit -m "feat(dstack): the skill checks itself structurally, and is seen to fail five ways
+git add skill/scripts/verify.cjs && git commit -m "feat(dstack): the skill checks itself structurally, and is seen to fail five ways
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -698,7 +763,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 6: Make 4-brain's description compliant, remove its em dashes, and point it at Dstack
 
 **Files:**
-- Modify: `~/.claude/skills/4-brain/SKILL.md` (frontmatter, one heading added to the body, and em-dash punctuation throughout the body)
+- Modify: `$FOURBRAIN/skill/SKILL.md` (the repo at `C:/Users/Owner/Desktop/Claude Code Projects/4-brain`, which `~/.claude/skills/4-brain` is a junction into) (frontmatter, one heading added to the body, and em-dash punctuation throughout the body)
 
 The 4-brain skill keeps its verified CLI invocation reference, which Dstack routes to. Its description today is a multi-line block containing em dashes and the whole NO-SELF-REVIEW law, violating the single-line, under-300 and em-dash rules; its body carries 24 more em dashes. The law moves into the body, the description becomes one compliant line that routes a process request to Dstack, and every em dash in the file is replaced.
 
@@ -734,16 +799,16 @@ An em dash between spaces becomes a comma and a space; an em dash with no surrou
 
 Run:
 ```bash
-cd ~/.claude/skills/4-brain && node -e '
+cd "$FOURBRAIN/skill" && node -e '
 const fs=require("fs");let s=fs.readFileSync("SKILL.md","utf8");
 const before=(s.match(/\u2014/g)||[]).length;
 s=s.replace(/# 4-Brain \u2014 One Driver, Four Perspectives/,"# 4-Brain: one driver, four perspectives");
 s=s.replace(/ \u2014 /g,", ").replace(/\u2014/g,", ");
 fs.writeFileSync("SKILL.md",s);
 console.log("replaced",before,"em dashes; remaining",(s.match(/\u2014/g)||[]).length);'
-git -C ~/.claude diff --stat skills/4-brain/SKILL.md
+git -C "$FOURBRAIN" diff --stat skill/SKILL.md
 ```
-Expected: `replaced 24 em dashes; remaining 0` (the count may differ by one or two if the file changed since; `remaining 0` is what matters), then a diff stat. Then read the diff (`git -C ~/.claude diff skills/4-brain/SKILL.md`) and fix any comma that should be a period or colon.
+Expected: `replaced 24 em dashes; remaining 0` (the count may differ by one or two if the file changed since; `remaining 0` is what matters), then a diff stat. Then read the diff (`git -C "$FOURBRAIN" diff skill/SKILL.md`) and fix any comma that should be a period or colon.
 
 - [ ] **Step 4: Verify by parsing the YAML, and that no em dash remains anywhere in the file**
 
@@ -751,8 +816,8 @@ Run:
 ```bash
 node -e '
 const fs=require("fs"),os=require("os"),path=require("path");
-const YAML=require(path.join("C:/Users/Owner/Desktop/Claude Code Projects/PFP-Forsight-CRm","node_modules","yaml"));
-const s=fs.readFileSync(path.join(os.homedir(),".claude/skills/4-brain/SKILL.md"),"utf8");
+const YAML=require("yaml");
+const s=fs.readFileSync("SKILL.md","utf8");
 const fm=s.split("---")[1];
 const doc=YAML.parse(fm);
 if(doc.name!=="4-brain")throw new Error("name is "+doc.name);
@@ -769,15 +834,15 @@ console.log("4-brain frontmatter OK:",d.length,"chars, no em dashes anywhere, la
 ```
 Expected: `4-brain frontmatter OK: <n under 300> chars, no em dashes anywhere, law in body`
 
-If `require` cannot find `yaml` under the PFP repo's `node_modules`, use `js-yaml` from the same place (`YAML.load` instead of `YAML.parse`). Do not install anything.
+If `require("yaml")` fails, Task 0 was skipped. Run it. Do not reach into another project's `node_modules`.
 
 - [ ] **Step 5: See it fail on the unindented form Codex tested**
 
 Run:
 ```bash
-cd ~/.claude/skills/4-brain && cp SKILL.md /tmp/4brain.bak && node -e 'const fs=require("fs");fs.writeFileSync("SKILL.md",fs.readFileSync("SKILL.md","utf8").replace(/^description: /m,"description:\n"))' && node -e '
+cd "$FOURBRAIN/skill" && cp SKILL.md /tmp/4brain.bak && node -e 'const fs=require("fs");fs.writeFileSync("SKILL.md",fs.readFileSync("SKILL.md","utf8").replace(/^description: /m,"description:\n"))' && node -e '
 const fs=require("fs"),path=require("path");
-const YAML=require(path.join("C:/Users/Owner/Desktop/Claude Code Projects/PFP-Forsight-CRm","node_modules","yaml"));
+const YAML=require("yaml");
 try{const doc=YAML.parse(fs.readFileSync("SKILL.md","utf8").split("---")[1]);if(typeof doc.description!=="string")throw new Error("description is not a string")}catch(e){console.log("caught as expected:",e.message);process.exit(0)}
 console.log("NOT CAUGHT");process.exit(1)'; echo "exit=$?"; cp /tmp/4brain.bak SKILL.md
 ```
@@ -786,10 +851,135 @@ Expected: `caught as expected: ...` and `exit=0`, then the restored file passes 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd ~/.claude && git add skills/4-brain/SKILL.md && git commit -m "docs(4-brain): one compliant description, the law in the body, no em dashes, a pointer to dstack
+git -C "$FOURBRAIN" add skill/SKILL.md && git -C "$FOURBRAIN" commit -m "docs(4-brain): one compliant description, the law in the body, no em dashes, a pointer to dstack
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 7: Make the owner configurable, so the skill is shareable
+
+**Files:**
+- Modify: `skill/SKILL.md`, `skill/references/stages.md`, `skill/references/pr-evidence.md`, `skill/references/class-rule.md`, `skill/scripts/verify.cjs`
+
+Tasks 1 to 6 name Devin directly, about thirty times. That is correct for this machine and wrong for a repository other people install. The engine keeps no owner in it; the owner is named once, in each project's `dstack.config.json`, under `owner.name`. This task is what has to be finished before the repository is made public.
+
+Do this task only after Task 5's five breaks have been seen to fail and restore, because two of those breaks quote strings this task edits.
+
+- [ ] **Step 1: Replace every naming of the owner with the role**
+
+Run:
+```bash
+node -e '
+const fs=require("fs");
+const files=["skill/SKILL.md","skill/references/stages.md","skill/references/pr-evidence.md","skill/references/class-rule.md","skill/scripts/verify.cjs"];
+let total=0;
+for(const f of files){
+  let s=fs.readFileSync(f,"utf8");
+  const before=(s.match(/Devin/g)||[]).length;
+  s=s.replace(/Devin.s\b/g,"the owner\u2019s").replace(/\bDevin\b/g,"the owner");
+  fs.writeFileSync(f,s);
+  console.log(f,before,"->",(s.match(/Devin/g)||[]).length);
+  total+=before;
+}
+console.log("replaced",total,"namings");'
+```
+Expected: one line per file, each ending `-> 0`, then a total around thirty. The exact total does not matter; every file ending in `-> 0` does.
+
+- [ ] **Step 2: Say once, in SKILL.md, where the owner comes from**
+
+In `skill/SKILL.md`, immediately after the `## The principle` section's last line, insert this paragraph:
+
+```markdown
+The owner is one named person, read from `owner.name` in the project's `dstack.config.json`. If that file is missing or the key is unset, every stage that needs a yes stops and says so. Dstack never guesses who is allowed to approve a change.
+```
+
+- [ ] **Step 3: Raise the word ceiling to 1,700, with the reason recorded**
+
+Thirty substitutions of a one-word name for a two-word role cost about thirty words, and `SKILL.md` sat at 1,594 of 1,600. In `skill/scripts/verify.cjs`, change the two places that carry the limit:
+
+```javascript
+// was: if (words > 1600) fail(`SKILL.md is ${words} words, over the 1600 limit`);
+if (words > 1700) fail(`SKILL.md is ${words} words, over the 1700 limit`);
+```
+
+and in the success line, `SKILL.md ${words} words` needs no change.
+
+The ceiling exists to keep the always-loaded file cheap, not as a magic number. 1,700 is the honest cost of the name becoming a role.
+
+- [ ] **Step 4: Update the two break anchors Task 5 uses**
+
+Break 2's anchor `and Devin said yes` is now `and the owner said yes`. Break 5's anchor is unchanged. Re-run the whole of Task 5 Step 3 with that one substitution.
+
+Run:
+```bash
+grep -c "and the owner said yes" skill/references/stages.md && grep -c "and Devin said yes" skill/references/stages.md; echo "second grep exit=$? (1 is correct: the old anchor must be gone)"
+```
+Expected: `1` from the first grep, then nothing from the second and `second grep exit=1`.
+
+- [ ] **Step 5: Re-run the verifier and all five breaks**
+
+Run the whole of Task 5 Step 2 and Task 5 Step 3 again, using the Break 2 anchor from Step 4.
+
+Expected: the same six results in the same order, the five exit=1 failures for their named reasons and a final `Dstack skill check OK` at exit 0, with the description now a few characters longer and still under 300 and the word count under 1,700.
+
+If any break stops biting, Step 1 changed something structural and not just a name. Stop and report which break went quiet. A break that no longer fails is the verifier going blind, which is worse than the name being wrong.
+
+- [ ] **Step 6: Prove no owner name survives anywhere in the shipped skill**
+
+Run:
+```bash
+grep -rn "Devin" skill/ ; echo "exit=$?"
+```
+Expected: no output and `exit=1` (grep exits 1 when it finds nothing). Any line printed is a leak that must be fixed before the repository is public.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add skill/ && git commit -m "refactor(dstack): the owner is a role read from config, not a name in the engine
+
+Thirty namings of one person became the role, and SKILL.md says once that
+the name is read from owner.name in the project's dstack.config.json. A
+missing key stops the stage rather than guessing who may approve a change.
+
+The word ceiling moves 1600 to 1700, which is the measured cost of a
+one-word name becoming a two-word role. All five structural breaks were
+re-run afterwards and still fail for their named reasons.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: Install it and prove the command exists
+
+**Files:**
+- None created. This runs the installer already in the repository.
+
+- [ ] **Step 1: Install**
+
+Run:
+```bash
+./install.ps1
+```
+Expected: `installed (junction) -> ...\.claude\skills\dstack -> ...\dstack\skill`, then the CLI probe table, then `Dstack skill check OK: ...` from the verifier, then the two closing lines.
+
+If the verifier fails here, the install is refused by design. Fix the skill, do not rerun with the check removed.
+
+- [ ] **Step 2: Prove the junction points at the repository and not a copy**
+
+Run:
+```bash
+node -e 'const fs=require("fs");const p=require("os").homedir()+"/.claude/skills/dstack";const st=fs.lstatSync(p);console.log("symlink/junction:",st.isSymbolicLink()||st.isDirectory());console.log("resolves to:",fs.realpathSync(p))'
+```
+Expected: `resolves to:` the repository's `skill` directory. If it resolves to anywhere under `.claude`, the installer copied instead of linking and a `git pull` will not update the skill.
+
+- [ ] **Step 3: Prove the skill is discoverable**
+
+In Claude Code, run `/dstack` with no argument.
+
+Expected: the routing table, nine rows, and a refusal to act without a stage. Record the output in the review log. This is the first evidence that the process exists as a command and not only as a plan.
 
 ---
 
