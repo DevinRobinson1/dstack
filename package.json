@@ -1,0 +1,13 @@
+{
+  "name": "dstack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nine stages, one command, and readable evidence at every gate.",
+  "license": "MIT",
+  "scripts": {
+    "verify": "cd skill && node scripts/verify.cjs"
+  },
+  "devDependencies": {
+    "yaml": "^2.5.0"
+  }
+}

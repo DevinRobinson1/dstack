@@ -723,30 +723,33 @@ Tasks 1 to 6 are built and proven with the wording exactly as given. Task 7 chan
 Every mutation normalizes line endings first and asserts its anchor was found, so a break fails for the reason named and not by accident.
 
 ```bash
-cd skill && cp SKILL.md /tmp/SKILL.bak && cp references/stages.md /tmp/stages.bak
+cd skill && cp SKILL.md SKILL.md.bak && cp references/stages.md references/stages.md.bak
 
 # Break 1: swap the Plan and Build command cells (both routes still exist, but on the wrong rows).
 node -e 'const fs=require("fs");let s=fs.readFileSync("SKILL.md","utf8").replace(/\r\n/g,"\n");if(!s.includes("`/dstack plan`")||!s.includes("`/dstack build`"))throw new Error("anchor");s=s.replace("`/dstack plan`","`/dstack TEMP`").replace("`/dstack build`","`/dstack plan`").replace("`/dstack TEMP`","`/dstack build`");fs.writeFileSync("SKILL.md",s)'
-node scripts/verify.cjs; echo "exit=$?"; cp /tmp/SKILL.bak SKILL.md
+node scripts/verify.cjs; echo "exit=$?"; cp SKILL.md.bak SKILL.md
 
 # Break 2: alter S1 in stages.md only, so the canonical blocks differ.
 node -e 'const fs=require("fs");let s=fs.readFileSync("references/stages.md","utf8");if(!s.includes("and Devin said yes"))throw new Error("anchor");fs.writeFileSync("references/stages.md",s.replace("and Devin said yes","and nobody said anything"))'
-node scripts/verify.cjs; echo "exit=$?"; cp /tmp/stages.bak references/stages.md
+node scripts/verify.cjs; echo "exit=$?"; cp references/stages.md.bak references/stages.md
 
 # Break 3: empty the pre-flight section (line endings normalized, both boundaries asserted).
 node -e 'const fs=require("fs");let s=fs.readFileSync("SKILL.md","utf8").replace(/\r\n/g,"\n");const a=s.indexOf("## Pre-flight\n");const b=s.indexOf("\n## ",a+14);if(a===-1||b===-1)throw new Error("anchor");fs.writeFileSync("SKILL.md",s.slice(0,a+14)+"\n"+s.slice(b))'
-node scripts/verify.cjs; echo "exit=$?"; cp /tmp/SKILL.bak SKILL.md
+node scripts/verify.cjs; echo "exit=$?"; cp SKILL.md.bak SKILL.md
 
 # Break 4: pad the description to exactly 300 characters.
 node -e 'const fs=require("fs");let s=fs.readFileSync("SKILL.md","utf8").replace(/\r\n/g,"\n");const m=s.match(/^description:\s*(.+)$/m);if(!m)throw new Error("anchor");const d=m[1]+" ".repeat(300-m[1].length)+"x";fs.writeFileSync("SKILL.md",s.replace(m[0],"description: "+d.slice(0,300)))'
-node scripts/verify.cjs; echo "exit=$?"; cp /tmp/SKILL.bak SKILL.md
+node scripts/verify.cjs; echo "exit=$?"; cp SKILL.md.bak SKILL.md
 
 # Break 5: empty the Who field of Gate in stages.md (the value must be on the same line).
 node -e 'const fs=require("fs");let s=fs.readFileSync("references/stages.md","utf8").replace(/\r\n/g,"\n");const line="**Who:** Codex (config default, xhigh) and Grok, in parallel, on the diff. Claude adjudicates.";if(!s.includes(line))throw new Error("anchor");fs.writeFileSync("references/stages.md",s.replace(line,"**Who:**"))'
-node scripts/verify.cjs; echo "exit=$?"; cp /tmp/stages.bak references/stages.md
+node scripts/verify.cjs; echo "exit=$?"; cp references/stages.md.bak references/stages.md
 
 # Restored: must pass.
 node scripts/verify.cjs; echo "exit=$?"
+
+# Remove the backups so a later run cannot read a stale one.
+rm -f SKILL.md.bak references/stages.md.bak
 ```
 Expected, in order: `SKILL.md: row 2 routes to \`/dstack build\`, expected \`/dstack plan\`` exit=1; `stop-rule block differs between SKILL.md and stages.md` exit=1; `SKILL.md: ## Pre-flight section is too short to be real` exit=1; `SKILL.md: description is 300 chars, must be under 300` exit=1; `stages.md: ## 5. Gate **Who:** is empty` exit=1; then `Dstack skill check OK` exit=0.
 
@@ -840,11 +843,11 @@ If `require("yaml")` fails, Task 0 was skipped. Run it. Do not reach into anothe
 
 Run:
 ```bash
-cd "$FOURBRAIN/skill" && cp SKILL.md /tmp/4brain.bak && node -e 'const fs=require("fs");fs.writeFileSync("SKILL.md",fs.readFileSync("SKILL.md","utf8").replace(/^description: /m,"description:\n"))' && node -e '
+cd "$FOURBRAIN/skill" && cp SKILL.md SKILL.md.bak && node -e 'const fs=require("fs");fs.writeFileSync("SKILL.md",fs.readFileSync("SKILL.md","utf8").replace(/^description: /m,"description:\n"))' && node -e '
 const fs=require("fs"),path=require("path");
 const YAML=require("yaml");
 try{const doc=YAML.parse(fs.readFileSync("SKILL.md","utf8").split("---")[1]);if(typeof doc.description!=="string")throw new Error("description is not a string")}catch(e){console.log("caught as expected:",e.message);process.exit(0)}
-console.log("NOT CAUGHT");process.exit(1)'; echo "exit=$?"; cp /tmp/4brain.bak SKILL.md
+console.log("NOT CAUGHT");process.exit(1)'; echo "exit=$?"; cp SKILL.md.bak SKILL.md
 ```
 Expected: `caught as expected: ...` and `exit=0`, then the restored file passes Step 4 again.
 
