@@ -1,0 +1,118 @@
+#!/usr/bin/env node
+// Dstack's own pre-delivery check. Exit 0 means the skill files are ready.
+// Structural, not substring: routing rows as (number, name, command) tuples,
+// contract sections with five same-line fields, and the canonical stop-rule
+// block compared byte for byte between the two files.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const root = path.join(__dirname, "..");
+const read = (p) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+const problems = [];
+
+const ROUTES = [
+  [1, "Intake", "intake"], [2, "Plan", "plan"], [3, "Build", "build"], [4, "Prove", "prove"],
+  [5, "Gate", "gate"], [6, "See it", "see"], [7, "Ship", "ship"], [8, "Watch", "watch"], [9, "Retro", "retro"],
+];
+const STAGES = ROUTES.map((r) => r[2]);
+const HEADINGS = ROUTES.map((r) => `## ${r[0]}. ${r[1]}`);
+const FIELDS = ["**Who:**", "**Needs:**", "**Produces:**", "**Owner reads:**", "**Stop:**"];
+const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md"];
+
+for (const f of files) {
+  if (!fs.existsSync(path.join(root, f))) problems.push(`${f}: missing`);
+}
+if (problems.length) report();
+for (const f of files) {
+  const dashes = (read(f).match(/\u2014/g) || []).length;
+  if (dashes) problems.push(`${f}: ${dashes} em dash(es)`);
+}
+
+const skill = read("SKILL.md");
+const contract = read("references/stages.md");
+const evidence = read("references/pr-evidence.md");
+
+// Description: exactly one single-line field, action verb, Use when, strictly under 300.
+const fm = skill.split("---")[1] || "";
+const descLines = fm.split("\n").filter((l) => /^description:/.test(l));
+if (descLines.length !== 1) problems.push(`SKILL.md: expected exactly one single-line description, found ${descLines.length}`);
+const desc = (descLines[0] || "").replace(/^description:\s*/, "");
+if (desc.length >= 300) problems.push(`SKILL.md: description is ${desc.length} chars, must be under 300`);
+if (!/^[A-Z][a-z]+ /.test(desc)) problems.push("SKILL.md: description must start with an action verb");
+if (!/Use when/.test(desc)) problems.push("SKILL.md: description needs a Use when clause");
+const words = skill.split(/\s+/).filter(Boolean).length;
+if (words > 1700) problems.push(`SKILL.md: ${words} words, limit 1700`);
+
+// Routing table: each row is checked as its (number, name, command) tuple, in order.
+const rows = skill.split("\n").filter((l) => /^\|\s*\d+\s*\|/.test(l));
+if (rows.length !== ROUTES.length) problems.push(`SKILL.md: routing table has ${rows.length} rows, expected ${ROUTES.length}`);
+for (const [num, name, cmd] of ROUTES) {
+  const row = rows.find((l) => new RegExp(`^\\|\\s*${num}\\s*\\|`).test(l));
+  if (!row) { problems.push(`SKILL.md: routing table has no row ${num}`); continue; }
+  const cells = row.split("|").map((c) => c.trim());
+  if (cells[2] !== name) problems.push(`SKILL.md: row ${num} is named "${cells[2]}", expected "${name}"`);
+  if (cells[3] !== `\`/dstack ${cmd}\``) problems.push(`SKILL.md: row ${num} routes to ${cells[3]}, expected \`/dstack ${cmd}\``);
+}
+
+// Contract: every heading, in order; every field on its own line with a value on that line.
+let last = -1;
+for (let i = 0; i < HEADINGS.length; i++) {
+  const h = HEADINGS[i];
+  const at = contract.indexOf(h + "\n");
+  if (at === -1) { problems.push(`stages.md: missing ${h}`); continue; }
+  if (at < last) problems.push(`stages.md: ${h} is out of order`);
+  last = at;
+  const nextAt = i + 1 < HEADINGS.length ? contract.indexOf(HEADINGS[i + 1] + "\n") : contract.indexOf("\n## Stop rules");
+  const section = contract.slice(at, nextAt === -1 ? undefined : nextAt);
+  for (const field of FIELDS) {
+    const line = section.split("\n").find((l) => l.startsWith(field));
+    if (!line) { problems.push(`stages.md: ${h} has no ${field} line`); continue; }
+    if (!line.slice(field.length).trim()) problems.push(`stages.md: ${h} ${field} is empty`);
+  }
+  const stop = (section.split("\n").find((l) => l.startsWith("**Stop:**")) || "").slice("**Stop:**".length).trim();
+  if (stop && !/^(S\d|none|see )/.test(stop)) problems.push(`stages.md: ${h} Stop must begin with an S-rule, "none", or "see ": got "${stop.slice(0, 30)}"`);
+}
+
+// Stop rules: canonical block, byte-identical in both files, with all six ids and the two load-bearing phrases.
+const block = (text, name) => {
+  const m = text.match(/<!-- dstack-stop-rules-begin -->\n([\s\S]*?)<!-- dstack-stop-rules-end -->/);
+  if (!m) { problems.push(`${name}: no canonical stop-rule block`); return null; }
+  return m[1];
+};
+const a = block(skill, "SKILL.md"), b = block(contract, "stages.md");
+if (a !== null && b !== null && a !== b) problems.push("stop-rule block differs between SKILL.md and stages.md");
+if (a) {
+  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
+  if (!/autoMergeOnPass/.test(a)) problems.push("stop rules: S6 must name autoMergeOnPass");
+  if (!/BOTH/.test(a)) problems.push("stop rules: S1 must require BOTH the Codex verdict and the owner's yes");
+}
+
+// The triad: pre-flight and pre-delivery sections exist with real content.
+for (const heading of ["## Pre-flight", "## Pre-delivery check"]) {
+  const at = skill.indexOf(heading + "\n");
+  if (at === -1) { problems.push(`SKILL.md: no ${heading} section`); continue; }
+  const end = skill.indexOf("\n## ", at + heading.length);
+  const body = skill.slice(at + heading.length, end === -1 ? undefined : end);
+  if (body.trim().split("\n").filter((l) => l.trim()).length < 3) problems.push(`SKILL.md: ${heading} section is too short to be real`);
+}
+
+// The PR template carries every stage line and every required section.
+for (const s of STAGES) if (!new RegExp(`^\\s*${s}:`, "m").test(evidence)) problems.push(`pr-evidence.md: Stages block has no line for ${s}`);
+for (const section of ["## Claim", "## Evidence is about", "## Stages", "## Baseline proof", "## Proof ledger", "## Acceptance", "## Class", "## Out of scope", "## Deviations from the plan", "## Not verified", "## Risks and prerequisites", "## Rollback"]) {
+  if (!evidence.includes(section)) problems.push(`pr-evidence.md: missing ${section}`);
+}
+
+// The state file example in SKILL.md names every stage, and the vocabulary includes stale.
+for (const s of STAGES) if (!new RegExp(`"${s}":\\s*\\{`).test(skill)) problems.push(`SKILL.md: state file example has no "${s}" entry`);
+if (!/`stale`/.test(skill)) problems.push("SKILL.md: state vocabulary must include stale");
+
+function report() {
+  if (problems.length) {
+    console.error("Dstack skill check FAILED");
+    for (const p of problems) console.error("  - " + p);
+    process.exit(1);
+  }
+  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical`);
+  process.exit(0);
+}
+report();
