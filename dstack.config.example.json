@@ -1,0 +1,72 @@
+{
+  "$comment": "Copy to dstack.config.json at your project root and fill in. Dstack has no project knowledge of its own; everything below is what makes it yours. A stage whose command is unset refuses to run and names the missing key. It never guesses and never silently passes.",
+
+  "owner": {
+    "name": "Devin",
+    "reads": "evidence",
+    "$comment": "The one human whose yes is required at Plan and at Ship. 'reads' is 'evidence' or 'code' and decides how much explaining each stage owes."
+  },
+
+  "plan": {
+    "dir": "docs/superpowers/plans",
+    "reviewer": "codex",
+    "skipUnderLines": 20,
+    "$comment": "Changes under skipUnderLines may skip the adversarial plan review. The owner's yes may never be skipped."
+  },
+
+  "build": {
+    "runner": "codex",
+    "reasoningEffort": "medium",
+    "$comment": "The builder runs fast because the plan already did the thinking. The reviewer runs deep. Set reasoning depth per invocation, never by editing a shared config mid-run."
+  },
+
+  "prove": {
+    "harness": "scripts/mutate.cjs",
+    "testCommand": "npm test --",
+    "typecheckCommand": "npm run check",
+    "$comment": "harness mutates each fix back out and requires the named test to fail for the named reason before restoring it."
+  },
+
+  "gate": {
+    "command": "scripts/agent-bridge/gate-pr.cjs",
+    "brains": ["codex", "grok"],
+    "outDir": ".4-brain-out",
+    "autoMerge": {
+      "file": "scripts/agent-bridge/shop.config.json",
+      "key": "autoMergeOnPass",
+      "mustBe": false,
+      "$comment": "Gate refuses to run if this key is true. Nothing merges on a gate result alone."
+    },
+    "maxRoundsWithoutProgress": 2,
+    "$comment": "Compare each round's in-scope major count to the previous real round. Infrastructure rounds do not count. Two comparisons with no fall means hand it to the owner, not a third round."
+  },
+
+  "seeIt": {
+    "command": "npx playwright test --config=playwright.dstack.config.ts",
+    "screenshotDir": ".dstack/screenshots",
+    "appliesWhenChanged": ["client/"],
+    "$comment": "Not applicable when no path in appliesWhenChanged is touched. 'Not applicable' is a state the verifier recognizes; 'skipped' is not."
+  },
+
+  "ship": {
+    "mergeCommand": "gh pr merge --squash --match-head-commit {sha}",
+    "requireBaseBranch": "main",
+    "$comment": "The full head sha is mandatory. After a squash merge, ancestry is the wrong containment test; verify content per touched file instead."
+  },
+
+  "watch": {
+    "command": null,
+    "$comment": "Unset means Watch refuses and says so. Set it to whatever proves the deploy landed and nothing was interrupted mid-flight."
+  },
+
+  "ticket": {
+    "lookupCommand": "node scripts/agent-bridge/ticket-directive.cjs --lookup {id}",
+    "markerRequiredInPrBody": true,
+    "$comment": "The marker is generated only by lookupCommand, never written by hand. It is what lets a merge resolve the ticket and email the customer who reported it."
+  },
+
+  "style": {
+    "noEmDashes": true,
+    "commitTrailer": "Co-Authored-By: Claude <noreply@anthropic.com>"
+  }
+}
