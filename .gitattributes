@@ -1,0 +1,13 @@
+# Text normalizes to LF in the repository regardless of the machine that commits.
+* text=auto eol=lf
+
+# The shell installer must be LF or it fails on macOS and Linux with
+# "bad interpreter: /usr/bin/env bash^M". Non-negotiable.
+*.sh   text eol=lf
+*.cjs  text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+
+# PowerShell is checked out CRLF on Windows, which is what it expects.
+*.ps1  text eol=crlf
