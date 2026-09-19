@@ -54,6 +54,7 @@ Canonical. `references/stages.md` carries this block verbatim under the same hea
 - **S6 Ship.** Nothing merges on a conversation. Only the owner’s explicit say-so, only a gate PASS whose `head` equals the live PR head, only `--match-head-commit <full sha>`. The gate runner is invoked with auto-merge off, and Gate refuses to run if `shop.config.json` has `autoMergeOnPass` true.
 - **S7 Routing.** Routing decides what a stage costs, never what it concludes. A router that is missing, slow, or unsure routes to the stage default and says so on the PR. It never routes below a floor, never turns a BLOCK into a PASS, and never skips a stage the owner’s yes is required for. Uncertainty routes up, never down.
 - **S8 Triage.** A triage reading may only add work or add caution. It never removes a finding from the list the adjudicator reads, never lowers a severity a reviewer assigned, never approves a plan, and never turns an infra hold into a pass. An unsure reading resolves toward more work, and any failure returns the input unchanged and says so.
+- **S9 Retro.** A finding that does not carry its sample count is not a finding. Below the configured minimum per group, or a spread under the configured margin, Retro reports how much more evidence it needs and no finding at all. Retro never edits a threshold: it reports, and a person changes the config.
 <!-- dstack-stop-rules-end -->
 
 ## What may be skipped
@@ -67,11 +68,7 @@ Nothing else may be skipped. Pre-flight refuses.
 
 ## Who builds, and when Claude may
 
-Codex builds from the frozen plan. Claude writes code only when `/codex-build`'s two fix rounds are spent, and then the state file records `"by": "claude", "reason": "codex fix rounds spent"` and the PR Stages block says the same.
-
-## Reviews land before edits begin
-
-During Gate, read Codex's findings as they arrive and start the class rule on them. Edit no file until both reviews have landed against the same `verdict.head`: the class rule needs every finding first.
+Codex builds from the frozen plan. Claude writes code only when `/codex-build`'s two fix rounds are spent, recorded in the state file and the PR.
 
 ## The class rule
 
@@ -79,7 +76,7 @@ Before fixing any finding from any reviewer, read `references/class-rule.md` and
 
 ## What each PR carries
 
-Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the body, never the diff. Pre-delivery for Prove, Gate, See it and Ship verifies the body has every section with content.
+Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the body, never the diff. Pre-delivery verifies every section is present and non-empty.
 
 ## Tools this routes to
 
@@ -94,17 +91,17 @@ Stages that spend measure the change first: `node scripts/route.cjs --stage <sta
 
 A tier is a class of work. The catalog's `serves` line says which models can do it; the router picks the cheapest one already on that line. `--explain` prints the comparison.
 
-It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not on a path glob. With no key or `enabled: false`, every stage runs at its default and says so.
+It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not on a glob. With no key or `enabled: false`, every stage runs at its default and says so.
 
 ## Reading the review
 
-Gate and Plan also triage: `scripts/triage.cjs` judges whether a failed run was infra, ranks findings and class-rule grep hits, counts distinct ideas for S3, and holds back a plan that cannot carry a review. `references/triage.md` is the contract.
+Gate and Plan also triage: `triage.cjs` judges whether a failed run was infra, ranks findings and class-rule hits, counts distinct ideas for S3, and holds back a plan that cannot carry a review. `references/triage.md` is the contract, and S8 is enforced in code: a reading may only add work or add caution.
 
-The invariant is S8, and it is enforced in code: a reading may only add work or add caution. Nothing is ever removed from what the adjudicator reads.
+Retro reads outcomes back: `retro.cjs --fit` says which config numbers the evidence disagrees with, and which it cannot judge yet (S9). Contract: `references/retro.md`.
 
 ## Pre-flight
 
-Before routing, load `.dstack/state.json`. If it does not exist and the stage is not Intake, refuse. Then check the stage's `Needs` in `references/stages.md`: the predecessor's recorded state, and the named artifact sections present and non-empty. Refuse and print this if anything is missing:
+Before routing, load `.dstack/state.json`. If it is absent and the stage is not Intake, refuse. Then check the stage's `Needs` in `references/stages.md`: the predecessor's recorded state, and the named artifact sections present and non-empty. Refuse and print this if anything is missing:
 
     Dstack cannot run <stage>: <what is missing>.
     <stage> needs: <the predecessor state and the artifact sections named in stages.md>.

@@ -340,5 +340,14 @@
     },
     "provider": "vercel",
     "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead."
+  },
+  "retro": {
+    "$comment": "The ledger that corrects the guesses. See skill/references/retro.md. Rates with sample counts beside them, not a significance test. Retro never edits a threshold; it reports and you decide.",
+    "enabled": true,
+    "ledger": ".dstack/retro/ledger.jsonl",
+    "minPerGroup": 12,
+    "minDifference": 0.15,
+    "minPairs": 20,
+    "$comment_mins": "A comparison is reported only when every group has minPerGroup rows AND the spread exceeds minDifference. There is no flag that relaxes this at the call site. Lowering these numbers is possible and is a decision you are making in the open."
   }
 }

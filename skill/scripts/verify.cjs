@@ -17,7 +17,7 @@ const ROUTES = [
 const STAGES = ROUTES.map((r) => r[2]);
 const HEADINGS = ROUTES.map((r) => `## ${r[0]}. ${r[1]}`);
 const FIELDS = ["**Who:**", "**Needs:**", "**Produces:**", "**Owner reads:**", "**Stop:**"];
-const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md", "references/triage.md", "references/state.md"];
+const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md", "references/triage.md", "references/state.md", "references/retro.md"];
 
 for (const f of files) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`${f}: missing`);
@@ -85,7 +85,7 @@ const block = (text, name) => {
 const a = block(skill, "SKILL.md"), b = block(contract, "stages.md");
 if (a !== null && b !== null && a !== b) problems.push("stop-rule block differs between SKILL.md and stages.md");
 if (a) {
-  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
+  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
   if (!/autoMergeOnPass/.test(a)) problems.push("stop rules: S6 must name autoMergeOnPass");
   if (!/BOTH/.test(a)) problems.push("stop rules: S1 must require BOTH the Codex verdict and the owner's yes");
 }
@@ -225,6 +225,35 @@ if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not poin
 // The skill must tell the reader where the routing contract lives.
 if (!/references\/routing\.md/.test(skill)) problems.push("SKILL.md: does not point at references/routing.md");
 if (!/references\/triage\.md/.test(skill)) problems.push("SKILL.md: does not point at references/triage.md");
+if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not point at references/retro.md");
+
+// Retro: the refusal has to be real, not described. The minimums must be
+// numbers, and the pure function must actually withhold a finding below them.
+(function retro() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
+  const t = cfg.retro;
+  if (!t) { problems.push("dstack.config.example.json: no retro block"); return; }
+  if (!Number.isInteger(t.minPerGroup) || t.minPerGroup < 2) problems.push("retro: minPerGroup must be an integer of at least 2");
+  if (typeof t.minDifference !== "number" || t.minDifference < 0 || t.minDifference > 1) problems.push("retro: minDifference must be a proportion between 0 and 1");
+  if (!Number.isInteger(t.minPairs) || t.minPairs < 2) problems.push("retro: minPairs must be an integer of at least 2");
+  const contract = read("references/retro.md");
+  if (!/not a significance test/i.test(contract)) problems.push("retro.md: must say plainly that this is not a significance test");
+  if (!/does not carry its sample count is not a finding/.test(contract)) problems.push("retro.md: does not state the refusal");
+  try {
+    const mod = require("./retro.cjs");
+    // Four rows against a minimum of twelve must withhold, whatever else changes.
+    const rows = [];
+    for (let i = 0; i < 4; i++) { rows.push({ t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "skim", model: "m" }, { t: "outcome", pr: i, head: `h${i}`, blocked: true }); }
+    for (let i = 10; i < 40; i++) { rows.push({ t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m" }, { t: "outcome", pr: i, head: `h${i}`, blocked: false }); }
+    const res = mod.fit(rows, { retro: t });
+    const f = res.findings.find((x) => /tier a change was built at/.test(x.question));
+    if (!f || f.enough !== false) problems.push("retro: fit() reported on a group below minPerGroup, which S9 forbids");
+    for (const x of res.findings) if (typeof x.n !== "number") problems.push("retro: fit() emitted a finding with no sample count");
+  } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
+})();
 
 // Triage: thresholds must be numbers in range, and the invariant has to be
 // stated where a reader of the contract will hit it.
@@ -266,7 +295,7 @@ function report() {
     for (const p of problems) console.error("  - " + p);
     process.exit(1);
   }
-  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical, routing and triage policy resolve`);
+  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical, routing, triage and retro policy resolve`);
   process.exit(0);
 }
 report();

@@ -75,6 +75,22 @@ It labels and orders findings but never removes one. It raises a severity but ne
 
 Contract in [skill/references/triage.md](skill/references/triage.md).
 
+## The numbers are guesses, and Retro is what corrects them
+
+Five routing weights. Four bands. Eight surface floors. Six triage thresholds. Three token shapes. Three claims about what a given model can be trusted to do. Every one of them was set by hand, every one is stated as a guess in the contract that carries it, and until Retro nothing observed whether any of them was right.
+
+Retro is a ledger and an analysis. Every routed decision and every gate round leaves an append-only row, and one command reads them back and says which numbers in your config the evidence disagrees with. It answers five questions: does the tier predict a block, does the model matter at a fixed tier, do the triage labels hold against source, are the token shapes right, and does the risk index predict rounds.
+
+Most of the value is in what it refuses to say. Stop rule S9:
+
+> **A finding that does not carry its sample count is not a finding.**
+
+Five rows will always produce a difference that looks like signal, and the damage is not a wrong number on a screen: it is someone editing a safety floor because of one. So a comparison is reported only when every group has enough rows and the spread is large enough to matter, the minimums live in the pure function rather than in the documentation, and there is deliberately no flag that relaxes them. The only reason to reach for such a flag is to get an answer you had already decided on.
+
+The expected first run is every line reading "not enough evidence yet, this needs N more". That is the correct output, not a failure.
+
+Two things it does not do. It never edits a threshold: it reports, and a person changes the config, because a process that tunes its own safety thresholds from its own small sample will talk itself into anything. And it is **not a significance test**, which `skill/references/retro.md` says in those words. It is rates and differences with sample counts beside them, a tripwire rather than a study.
+
 ## Status
 
 Under construction, in the open. Plan 1 (the skill shell) is written, reviewed across three adversarial rounds, and dry-run proven. Plans 2 through 6 are not written yet.
@@ -86,7 +102,7 @@ Under construction, in the open. Plan 1 (the skill shell) is written, reviewed a
 | 3 | Parallel gate runner with infrastructure retry | Not started |
 | 4 | See it: real browser evidence | Not started |
 | 5 | Watch: deploy observation | Not started |
-| 6 | Retro: metrics that close the loop | Not started |
+| 6 | Retro: the ledger that corrects the guesses | Built, proven, ungated |
 | 7 | Jev routing: measured tiers, model catalog, and the end of proxy heuristics | Built, proven, ungated |
 | 8 | Triage: infra verdicts, finding ranking, distinct-idea progress | Built, proven, ungated |
 
