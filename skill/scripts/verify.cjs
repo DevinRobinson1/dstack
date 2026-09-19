@@ -192,6 +192,26 @@ if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not poin
     if (rule.pin && !r.models[rule.pin]) problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which the catalog does not define`);
     if (rule.pin && r.models[rule.pin] && !require("./route.cjs").servesTier(r.models[rule.pin], rule.floor, stage))
       problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which does not serve that stage's floor "${rule.floor}"`);
+    // A stage must say what kind of work it is, or the router cannot tell an
+    // agent from a text model and will happily pick one that cannot do the job.
+    const kinds = Object.values(r.runners || {}).map((x) => x && x.kind).filter(Boolean);
+    if (!rule.needs) problems.push(`routing: stage ${stage} does not declare needs, so the router cannot tell which runners can do its work`);
+    else {
+      for (const k of (Array.isArray(rule.needs) ? rule.needs : [rule.needs])) {
+        if (!kinds.includes(k)) problems.push(`routing: stage ${stage} needs "${k}", which no runner declares`);
+      }
+      // The gate printing "none" is this: every tier in range must have at
+      // least one enabled model that both serves it and can do the work.
+      const exec = require("./exec.cjs");
+      for (let i = order.indexOf(rule.floor); i <= order.indexOf(rule.ceiling); i++) {
+        const tier = order[i];
+        const any = Object.entries(r.models || {}).some(([id, m]) =>
+          !id.startsWith("$") && m && !m.disabled &&
+          require("./route.cjs").servesTier(m, tier, stage) &&
+          exec.runnerCanDo(m, rule, r));
+        if (!any) problems.push(`routing: stage ${stage} at tier "${tier}" has no enabled model that both serves it and can do ${JSON.stringify(rule.needs)} work`);
+      }
+    }
     if (!rule.typical) { problems.push(`routing: stage ${stage} has no typical shape, so models cannot be ranked on cost`); continue; }
     for (const key of ["in", "out"]) {
       if (typeof rule.typical[key] !== "number") problems.push(`routing: stage ${stage}.typical.${key} is not a number`);
@@ -277,6 +297,15 @@ if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not poin
 for (const m of (read("references/stages.md").match(/route\.cjs --stage \w+[^`]*/g) || [])) {
   if (!/--head/.test(m)) problems.push(`stages.md: "${m.trim()}" does not pass --head, so its artifact cannot be attributed to a commit`);
 }
+
+// The router naming a model and something running it are different things.
+// Without a contract that executes, routing is advice and the stage runs
+// whatever it always ran, which is how a catalog of unreachable models went
+// unnoticed.
+if (!/exec\.cjs/.test(read("references/stages.md")))
+  problems.push("exec: no contract names exec.cjs, so nothing runs the model the router picks");
+if (!/catalog\.cjs[^`]*--check/.test(read("references/stages.md")))
+  problems.push("catalog: no contract runs --check, so an unreachable model stays in the ranking until a stage fails on it");
 
 // Prices go stale the day a provider changes them. Something must say when to
 // check, or catalog.cjs is a tool nobody is told to run.

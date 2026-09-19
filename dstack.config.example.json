@@ -137,7 +137,8 @@
           "in": 25000,
           "out": 8000,
           "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
-        }
+        },
+        "needs": "text"
       },
       "build": {
         "kind": "ladder",
@@ -150,7 +151,9 @@
           "in": 60000,
           "out": 20000,
           "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
-        }
+        },
+        "needs": "agent",
+        "$comment_needs": "Build is the one stage that edits files. Only an agent runner can do it, so a gateway model is not eligible whatever its serves line says."
       },
       "gate": {
         "kind": "ladder",
@@ -164,7 +167,12 @@
           "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
         },
         "pin": null,
-        "$comment_pin": "Set to a model id in the catalog to force this stage onto it and skip cost ranking. Null means pick the cheapest model that serves the tier."
+        "$comment_pin": "Set to a model id in the catalog to force this stage onto it and skip cost ranking. Null means pick the cheapest model that serves the tier.",
+        "needs": [
+          "text",
+          "agent"
+        ],
+        "$comment_needs": "A gate can be a repository agent that greps its way around the code, or a text model handed the diff. Both are real reviews and they are not equal: the agent sees code the diff does not show, which is where the subtle findings live. Weigh that when writing a serves line for a text model at Gate."
       },
       "see": {
         "kind": "binary",
@@ -301,7 +309,22 @@
       }
     },
     "provider": "vercel",
-    "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead."
+    "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead.",
+    "runners": {
+      "$comment": "text: produces a string, so it can review, judge and summarize. agent: holds a tool loop with write access, so it can edit files and read back what changed. A text runner cannot do agent work however good the model is, and exec.cjs refuses the mismatch rather than letting a build return a paragraph describing the edits it would have made.",
+      "gateway": {
+        "kind": "text"
+      },
+      "codex": {
+        "kind": "agent"
+      },
+      "gemini": {
+        "kind": "agent"
+      },
+      "grok": {
+        "kind": "agent"
+      }
+    }
   },
   "style": {
     "noEmDashes": true,

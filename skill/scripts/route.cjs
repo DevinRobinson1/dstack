@@ -17,6 +17,10 @@
 const fs = require("fs");
 const path = require("path");
 const jev = require("./jev.cjs");
+// One implementation of "can this runner do this work", shared with the
+// executor. Two copies drift, and the drift is a stage routing to a model the
+// executor then refuses, which is invisible until someone runs it.
+const { runnerCanDo } = require("./exec.cjs");
 
 // ---------------------------------------------------------------------------
 // The question set. One call per stage: Jev answers all of them in one query.
@@ -269,7 +273,9 @@ function selectModel(tier, rule, routing) {
   const catalog = routing.models || {};
   const typical = (rule && rule.typical) || null;
   const rows = Object.entries(catalog)
-    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && servesTier(m, tier, rule && rule.name))
+    // A model that cannot do this stage's kind of work is not a cheaper option,
+    // it is not an option. Build edits files; a text runner returns a string.
+    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && servesTier(m, tier, rule && rule.name) && runnerCanDo(m, rule, routing))
     .map(([id, m]) => ({ id, runner: m.runner || id, provider: m.provider || null, cost: estimateCost(m, typical), in: m.in, out: m.out, context: m.context }));
 
   if (!rows.length) return { model: null, runner: null, cost: null, why: `no model in the catalog serves ${tier}`, alternatives: [] };
@@ -375,13 +381,13 @@ function explain(config) {
   for (const [stage, rule] of Object.entries(routing.stages || {})) {
     if (rule.kind === "binary") continue;
     const t = rule.typical;
-    console.log(`\n  ${stage}: reads about ${t ? t.in.toLocaleString() : "?"} tokens, writes about ${t ? t.out.toLocaleString() : "?"}`);
+    console.log(`\n  ${stage}: ${rule.needs || "text"} work, reads about ${t ? t.in.toLocaleString() : "?"} tokens, writes about ${t ? t.out.toLocaleString() : "?"}`);
     for (const tier of order) {
       if (order.indexOf(tier) < order.indexOf(rule.floor) || order.indexOf(tier) > order.indexOf(rule.ceiling)) continue;
       const pick = selectModel(tier, Object.assign({ name: stage }, rule), routing);
       const alts = pick.alternatives.map((a) => `${a.id} ${a.cost == null ? "n/a" : "$" + a.cost.toFixed(2)}`).join(", ");
-      const note = pick.pinned ? "pinned, ranking skipped" : pick.cost == null ? "unpriced" : "$" + pick.cost.toFixed(2) + " a run";
-      console.log(`    ${tier.padEnd(9)} -> ${String(pick.model).padEnd(30)} ${note}`);
+      const note = pick.model === null ? pick.why : pick.pinned ? "pinned, ranking skipped" : pick.cost == null ? "unpriced" : "$" + pick.cost.toFixed(2) + " a run";
+      console.log(`    ${tier.padEnd(9)} -> ${String(pick.model === null ? "none" : pick.model).padEnd(30)} ${note}`);
       console.log(`    ${"".padEnd(9)}    ${pick.pinned ? "would have ranked" : "ranked"}: ${alts}`);
     }
   }
@@ -424,4 +430,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { decide, measure, route, selectModel, servesTier, estimateCost, riskIndex, bandFor, decidingConfidence, QUESTION_SETS, RISK_QUESTIONS, VISIBILITY_QUESTION };
+module.exports = { decide, measure, route, selectModel, servesTier, runnerCanDo, estimateCost, riskIndex, bandFor, decidingConfidence, QUESTION_SETS, RISK_QUESTIONS, VISIBILITY_QUESTION };

@@ -91,7 +91,7 @@ Stages that spend measure the change first: `route.cjs --stage <stage> --head <s
 
 A tier is a class of work. The catalog's `serves` line says which models can do it; the router picks the cheapest one already on that line. `--explain` prints the comparison.
 
-It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice. With no key or `enabled: false`, every stage runs at its default and says so.
+`exec.cjs` then runs what was picked, or refuses with a reason: a stage declares whether its work is text or agent, and a text runner cannot build because it returns a string instead of editing files. With no key or `enabled: false`, every stage runs at its default and says so.
 
 ## Reading the review
 

@@ -41,7 +41,9 @@ Route: `/grill-me-codex` when any design question is open; `/codex-review` when 
 **Owner reads:** nothing. Prove is what makes this safe.
 **Stop:** S1. A dirty tree also stops it before it starts. Codex never commits, and nothing is committed in this stage at all.
 
-**Routing:** `route.cjs --stage build --head <sha>` chooses the effort, capped below the top rung: if a build needs the top rung, the plan was not finished.
+**Routing:** `route.cjs --stage build --head <sha>` chooses the effort, capped below the top rung: if a build needs the top rung, the plan was not finished. Build declares `needs: "agent"`, so only a runner that can edit files and read back what changed is eligible. A text model is not a cheaper builder, it is not a builder: it returns a string describing edits it did not make.
+
+**Executing:** `node scripts/exec.cjs --decision .dstack/routing/build-<sha>.json --prompt-file <f>` runs whatever the router picked, or refuses with a reason and falls back. A refusal is recorded and printed on the PR; it is never a silent downgrade.
 
 How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-c model_reasoning_effort="<the routed effort>"`. Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
 
@@ -75,6 +77,8 @@ How:
 **Retro:** every round ends with `node scripts/retro.cjs --record outcome pr=N head=<sha> round=<n> majors=<n> distinct=<n> blocked=<true|false> infra=<true|false>`. An infra round is recorded with `infra=true` and is excluded from every rate, per S4. After adjudicating, one row per finding: `node scripts/retro.cjs --record adjudication pr=N label=<major|minor|questioned> confirmed=<true|false>`, where `confirmed` means it survived contact with source. Those rows are the only thing that can ever answer whether a tier, a model, or a triage label is doing anything.
 
 **Triage:** `triage.cjs` classifies a failed run as infra before the round is counted (S4), labels and orders every finding without removing any (S8), and counts distinct ideas for S3's comparison. The gate comment prints findings in, distinct ideas, and how many triage did not read.
+
+**Executing:** `node scripts/exec.cjs --decision .dstack/routing/gate-<sha>.json --prompt-file <f>` runs the chosen reviewer. Gate declares `needs: ["text", "agent"]` because both are real reviews and they are not equal: an agent greps its way around the repository and sees code the diff does not show, which is where the subtle findings live. A text reviewer sees only what you hand it, so weigh that before writing a `serves` line for one at Gate.
 
 **Routing:** `route.cjs --stage gate --head <sha>` chooses the reviewer's effort. The gate floor means a cheap measurement can never buy a shallow review, and no measurement can lower a verdict.
 
@@ -132,7 +136,9 @@ How: `scripts/ci/deploy-watch.cjs` (Plan 5): `/api/health`, error rate, and the 
 
 How: `node scripts/retro.cjs --fit` prints, per question, a finding, a "nothing worth acting on", or how many more rows it needs. Per S9 it never reports below the configured minimum and never edits a threshold: a person changes the config.
 
-Also at Retro, check the prices the whole cost ranking rests on: `node scripts/catalog.cjs --config dstack.config.json` reports any drift between the catalog and what the gateway actually charges, and `--write` applies it. Prices are facts and go stale silently; `serves` is a claim and is never touched. `--suggest --stage <stage>` ranks every model the gateway offers against that stage's real read and write shape.
+Also at Retro, check that the catalog is still true. `node scripts/catalog.cjs --config dstack.config.json --check` calls every priced model once and reports what actually answers: a model can be listed, priced and trusted and still refuse the account, in which case the router picks it and the stage fails. Reachability is a fact like price, not a claim like `serves`.
+
+And check the prices the whole cost ranking rests on: `node scripts/catalog.cjs --config dstack.config.json` reports any drift between the catalog and what the gateway actually charges, and `--write` applies it. Prices are facts and go stale silently; `serves` is a claim and is never touched. `--suggest --stage <stage>` ranks every model the gateway offers against that stage's real read and write shape.
 
 ## Stop rules
 

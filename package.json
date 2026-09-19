@@ -5,7 +5,7 @@
   "description": "Nine stages, one command, and readable evidence at every gate.",
   "license": "MIT",
   "scripts": {
-    "verify": "cd skill && node scripts/verify.cjs && node scripts/route.test.cjs && node scripts/triage.test.cjs && node scripts/retro.test.cjs"
+    "verify": "cd skill && node scripts/verify.cjs && node scripts/route.test.cjs && node scripts/triage.test.cjs && node scripts/retro.test.cjs && node scripts/exec.test.cjs"
   },
   "devDependencies": {
     "yaml": "^2.5.0"
