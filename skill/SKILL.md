@@ -29,17 +29,17 @@ Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_appl
 
 `/dstack <stage>` runs one stage. Read that stage's contract in `references/stages.md` first. Never run a stage from memory.
 
-| # | Stage | Command | Who | Owner reads |
-|---|---|---|---|---|
-| 1 | Intake | `/dstack intake` | shop intake, or the owner | nothing yet |
-| 2 | Plan | `/dstack plan` | Claude writes, Codex reviews, the owner says yes | the claim, the acceptance criteria, the named flows |
-| 3 | Build | `/dstack build` | the builder, at the routed effort | nothing |
-| 4 | Prove | `/dstack prove` | Claude | "N guarantees, N seen to fail, on <sha>" |
-| 5 | Gate | `/dstack gate` | the reviewers in parallel at the routed effort, Claude adjudicates | PASS or BLOCK, one line per major |
-| 6 | See it | `/dstack see` | a real browser, Gemini judges, Claude adjudicates | the screenshots |
-| 7 | Ship | `/dstack ship` | the owner says merge, Claude merges | one row per PR |
-| 8 | Watch | `/dstack watch` | automated, then Claude | one line per deploy |
-| 9 | Retro | `/dstack retro` | Claude | one table a week |
+| # | Stage | Command | Owner reads |
+|---|---|---|---|
+| 1 | Intake | `/dstack intake` | nothing yet |
+| 2 | Plan | `/dstack plan` | the claim, the acceptance criteria, the named flows |
+| 3 | Build | `/dstack build` | nothing |
+| 4 | Prove | `/dstack prove` | "N guarantees, N seen to fail, on <sha>" |
+| 5 | Gate | `/dstack gate` | PASS or BLOCK, one line per major |
+| 6 | See it | `/dstack see` | the screenshots |
+| 7 | Ship | `/dstack ship` | one row per PR |
+| 8 | Watch | `/dstack watch` | one line per deploy |
+| 9 | Retro | `/dstack retro` | one table a week |
 
 ## Stop rules
 
