@@ -119,6 +119,34 @@ function suggest(live, { typical, limit = 15, match = null, maxIn = null }) {
   return rows.slice(0, limit);
 }
 
+// Reachability is a fact, like price, and a different fact from either price
+// or capability. A model can be listed, priced, and trusted by the owner, and
+// still 403 because the account cannot reach it. The router would pick it,
+// the call would fail, and the failure would land at the stage rather than
+// here where it can be seen and fixed.
+async function checkReachable(id, key, timeoutMs) {
+  return new Promise((resolve) => {
+    const payload = Buffer.from(JSON.stringify({ model: id, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }), "utf8");
+    const req = https.request(
+      { hostname: "ai-gateway.vercel.sh", path: "/v1/chat/completions", method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "Content-Length": payload.length } },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let why = null;
+          try { why = (JSON.parse(text).error || {}).message || null; } catch { /* keep null */ }
+          resolve({ id, status: res.statusCode, ok: res.statusCode === 200, why });
+        });
+      }
+    );
+    req.setTimeout(timeoutMs, () => { req.destroy(); resolve({ id, status: 0, ok: false, why: `no answer in ${timeoutMs}ms` }); });
+    req.on("error", (e) => resolve({ id, status: 0, ok: false, why: e.message }));
+    req.end(payload);
+  });
+}
+
 async function fetchLive(routing) {
   const envName = (routing && routing.apiKeyEnv) || "AI_GATEWAY_API_KEY";
   const key = jev.readKey(envName, routing && routing.apiKeyFile);
@@ -168,6 +196,31 @@ async function main() {
     process.exit(0);
   }
 
+  if (has("check")) {
+    const envName = routing.apiKeyEnv || "AI_GATEWAY_API_KEY";
+    const key = jev.readKey(envName, routing.apiKeyFile);
+    const ids = Object.entries(routing.models || {})
+      .filter(([id, m]) => !id.startsWith("$") && m.provider !== "cli" && !m.disabled);
+    console.log("Can this account actually reach what the catalog trusts?\n");
+    const results = [];
+    for (const [id] of ids) {
+      const r = await checkReachable(id, key, (routing.timeoutMs || 20000) * 3);
+      results.push(r);
+      console.log(`  ${r.ok ? "OK  " : String(r.status).padEnd(4)} ${id}${r.ok ? "" : `   ${(r.why || "").slice(0, 70)}`}`);
+    }
+    const dead = results.filter((r) => !r.ok);
+    if (!dead.length) { console.log("\n  Every priced model in the catalog is reachable."); process.exit(0); }
+    console.log(`\n  ${dead.length} model(s) the router could pick and the call would fail.`);
+    if (!has("write")) { console.log("  Re-run with --write to mark them disabled, which takes them out of the ranking."); process.exit(0); }
+    for (const r of dead) {
+      config.routing.models[r.id].disabled = true;
+      config.routing.models[r.id].$unreachable = `${r.status}: ${(r.why || "").slice(0, 120)}`;
+    }
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    console.log(`  Marked ${dead.length} disabled in ${configPath}. Capability lines untouched: they are still what you trust, just not reachable today.`);
+    process.exit(0);
+  }
+
   const changes = diffPrices(routing.models || {}, res.live);
   if (!changes.length) { console.log("Catalog prices already match the gateway. Nothing to write."); process.exit(0); }
 
@@ -187,4 +240,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { normalizeLive, diffPrices, applyPrices, suggest, perMTok, fetchLive, GATEWAY_MODELS };
+module.exports = { normalizeLive, diffPrices, applyPrices, suggest, perMTok, fetchLive, checkReachable, GATEWAY_MODELS };

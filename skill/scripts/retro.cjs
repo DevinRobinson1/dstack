@@ -42,7 +42,10 @@ const LEDGER = ".dstack/retro/ledger.jsonl";
 // inventing a result is the one thing this ledger may never do.
 const ROW_SCHEMA = {
   decision:     { required: { pr: "number", head: "string", stage: "string" } },
-  outcome:      { required: { pr: "number", head: "string", blocked: "boolean" } },
+  // infra is required for the same reason blocked is. S4 says an infra
+  // round is not a round; a row that never says whether it was one is read as
+  // a real round, so a network timeout counts against the change under review.
+  outcome:      { required: { pr: "number", head: "string", blocked: "boolean", infra: "boolean" } },
   usage:        { required: { stage: "string", in: "number", out: "number" } },
   adjudication: { required: { pr: "number", label: "string", confirmed: "boolean" } },
   ship:         { required: { pr: "number", rounds: "number" } },
@@ -227,7 +230,9 @@ function fit(rows, config) {
     // adequate size whose risks genuinely differ, and take the most balanced.
     // If none exists, this sample cannot answer the question at any size.
     const avg = (xs) => xs.reduce((s, p) => s + p.rounds, 0) / xs.length;
-    const minCohort = Math.max(3, Math.floor(mins.minPairs / 4));
+    // Ceil, not floor: with minPairs 23 the stated minimum is 5.75, and
+    // flooring it to 5 accepts a cohort the rule says is too small.
+    const minCohort = Math.max(3, Math.ceil(mins.minPairs / 4));
     const distinct = [...new Set(paired.map((p) => p.risk))].sort((a, b) => a - b);
     let best = null;
     for (const t of distinct.slice(0, -1)) {

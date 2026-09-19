@@ -153,7 +153,7 @@ const CASES = [
     const f = path.join(d, "l.jsonl");
     const { execFileSync } = require("child_process");
     const cli = path.join(__dirname, "retro.cjs");
-    execFileSync(process.execPath, [cli, "--record", "outcome", "pr=12", "head=0055630", "round=2", "blocked=true", "--ledger", f], { cwd: d });
+    execFileSync(process.execPath, [cli, "--record", "outcome", "pr=12", "head=0055630", "round=2", "blocked=true", "infra=false", "--ledger", f], { cwd: d });
     const row = r.load(f).rows[0];
     fs.rmSync(d, { recursive: true, force: true });
     return [
@@ -169,7 +169,7 @@ const CASES = [
     const f = path.join(d, "l.jsonl");
     const noHead = r.record({ t: "outcome", pr: 12, blocked: true }, { file: f });
     const noPr = r.record({ t: "adjudication", label: "major" }, { file: f });
-    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: true }, { file: f });
+    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: true, infra: false }, { file: f });
     const rows = r.load(f).rows;
     fs.rmSync(d, { recursive: true, force: true });
     return [noHead.ok === false, /needs pr and head|needs head/.test(noHead.reason), /never be joined/.test(noHead.reason),
@@ -178,7 +178,7 @@ const CASES = [
   ["C1b a hand edited ledger is an input too: an unusable row is counted, not read", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     const f = path.join(d, "l.jsonl");
-    fs.writeFileSync(f, '{"t":"outcome","pr":12,"blocked":true}\n{"t":"outcome","pr":13,"head":"abc","blocked":true}\n');
+    fs.writeFileSync(f, '{"t":"outcome","pr":12,"blocked":true,"infra":false}\n{"t":"outcome","pr":13,"head":"abc","blocked":true,"infra":false}\n');
     const l = r.load(f);
     fs.rmSync(d, { recursive: true, force: true });
     return [l.rows.length === 1, l.corrupt === 1];
@@ -187,7 +187,7 @@ const CASES = [
     const rows = [];
     for (let i = 0; i < 20; i++) rows.push(
       { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: 2.0 },
-      { t: "outcome", pr: i, head: `h${i}`, blocked: false }, { t: "ship", pr: i, rounds: 2 });
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false, infra: false }, { t: "ship", pr: i, rounds: 2 });
     const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
     return [f.enough === false, f.n === 20, !/NaN/.test(f.why), /all 20 shipped PRs measured the same risk/.test(f.why)];
   }],
@@ -195,7 +195,7 @@ const CASES = [
     const rows = [];
     for (let i = 0; i < 20; i++) rows.push(
       { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: i < 10 ? 1.0 : 3.0 },
-      { t: "outcome", pr: i, head: `h${i}`, blocked: false }, { t: "ship", pr: i, rounds: i < 10 ? 1 : 3 });
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false, infra: false }, { t: "ship", pr: i, rounds: i < 10 ? 1 : 3 });
     const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
     return [f.enough === true, !/NaN/.test(f.why), f.n === 20];
   }],
@@ -226,7 +226,7 @@ const CASES = [
     const rows = [];
     for (let i = 0; i < 20; i++) rows.push(
       { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: i === 19 ? 3 : 1 },
-      { t: "outcome", pr: i, head: `h${i}`, blocked: false }, { t: "ship", pr: i, rounds: i < 10 ? 1 : 3 });
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false, infra: false }, { t: "ship", pr: i, rounds: i < 10 ? 1 : 3 });
     const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
     return [f.enough === false, /no risk boundary/.test(f.why), f.n === 20];
   }],
@@ -234,10 +234,10 @@ const CASES = [
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     const f = path.join(d, "l.jsonl");
     const noResult = r.record({ t: "outcome", pr: 12, head: "abc" }, { file: f });
-    const wrongType = r.record({ t: "outcome", pr: 12, head: "abc", blocked: "yes" }, { file: f });
+    const wrongType = r.record({ t: "outcome", pr: 12, head: "abc", blocked: "yes", infra: false }, { file: f });
     const noConfirm = r.record({ t: "adjudication", pr: 12, label: "major" }, { file: f });
     const noTokens = r.record({ t: "usage", stage: "build" }, { file: f });
-    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: false }, { file: f });
+    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: false, infra: false }, { file: f });
     fs.rmSync(d, { recursive: true, force: true });
     return [noResult.ok === false, /blocked \(missing\)/.test(noResult.reason),
             wrongType.ok === false, /must be a boolean, got string/.test(wrongType.reason),
@@ -254,6 +254,27 @@ const CASES = [
     return [got.length === 1, got[0].model === "mine", got[0].head === "abcdef022222",
             // An artifact with no head is skipped rather than guessed at.
             got.every((x) => x.model !== "legacy")];
+  }],
+  ["T1 the cohort minimum rounds up, so a cohort under the rule is refused", () => {
+    const rows = [];
+    for (let i = 0; i < 23; i++) rows.push(
+      { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: i < 18 ? 1 : 2 },
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false, infra: false }, { t: "ship", pr: i, rounds: 2 });
+    const f = r.fit(rows, { retro: { minPerGroup: 12, minDifference: 0.15, minPairs: 23 } }).findings.find((x) => /risk index predict/.test(x.question));
+    // 18 and 5. The stated minimum for minPairs 23 is 5.75, so 5 is too small.
+    return [f.enough === false, /at least 6/.test(f.why)];
+  }],
+  ["T2 an outcome that never says whether it was infra is refused", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    const f = path.join(d, "l.jsonl");
+    const noInfra = r.record({ t: "outcome", pr: 12, head: "abc", blocked: true }, { file: f });
+    const strInfra = r.record({ t: "outcome", pr: 12, head: "abc", blocked: true, infra: "false" }, { file: f });
+    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: true, infra: false }, { file: f });
+    fs.rmSync(d, { recursive: true, force: true });
+    // S4: an infra round is not a round. Silence read as "not infra" makes a
+    // network timeout count against the change under review.
+    return [noInfra.ok === false, /infra \(missing\)/.test(noInfra.reason),
+            strInfra.ok === false, /must be a boolean, got string/.test(strInfra.reason), ok.ok === true];
   }],
   ["the gate adapter is one function, and reads BLOCK and infra", () => {
     const b = r.adaptGateRounds({ head: "abc", round: 2, majors: 3, verdict: "BLOCK" });

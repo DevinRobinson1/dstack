@@ -408,8 +408,12 @@ async function main() {
   // The artifact carries the commit it is about. Retro matches on this, not on
   // the filename, because a filename carries seven characters and a head is
   // forty. Without it an artifact cannot be attributed and is skipped.
+  // Required, not optional. Writing a headless artifact succeeds here and is
+  // silently skipped by collect, so the decision vanishes from every rate: the
+  // producer must enforce what the consumer requires, or the gap is invisible.
   const head = arg("head", state && state.head ? state.head : null);
-  if (head) decision.head = head;
+  if (!head) { console.error("Dstack routing cannot run without --head: an artifact that does not carry the commit it is about cannot be attributed, and Retro will skip it."); process.exit(2); }
+  decision.head = head;
   const out = arg("out");
   if (out) { fs.mkdirSync(path.dirname(out), { recursive: true }); fs.writeFileSync(out, JSON.stringify(decision, null, 2) + "\n"); }
 
