@@ -393,7 +393,7 @@ function explain(config) {
 async function main() {
   const wantsExplain = process.argv.includes("--explain");
   const stage = arg("stage");
-  if (!stage && !wantsExplain) { console.error("usage: route.cjs --stage <plan|build|gate|see> [--state-file f.json] [--config dstack.config.json] [--out f.json]\n       route.cjs --explain [--config dstack.config.json]"); process.exit(2); }
+  if (!stage && !wantsExplain) { console.error("usage: route.cjs --stage <plan|build|gate|see> [--state-file f.json] [--config dstack.config.json] [--head <full sha>] [--out f.json]\n       route.cjs --explain [--config dstack.config.json]"); process.exit(2); }
   const configPath = arg("config", "dstack.config.json");
   let config = {};
   try { config = JSON.parse(fs.readFileSync(configPath, "utf8")); }
@@ -405,6 +405,11 @@ async function main() {
   if (stateFile) { try { state = JSON.parse(fs.readFileSync(stateFile, "utf8")); } catch { console.error(`Dstack routing cannot run: ${stateFile} is not json.`); process.exit(2); } }
 
   const decision = await route(stage, state, config);
+  // The artifact carries the commit it is about. Retro matches on this, not on
+  // the filename, because a filename carries seven characters and a head is
+  // forty. Without it an artifact cannot be attributed and is skipped.
+  const head = arg("head", state && state.head ? state.head : null);
+  if (head) decision.head = head;
   const out = arg("out");
   if (out) { fs.mkdirSync(path.dirname(out), { recursive: true }); fs.writeFileSync(out, JSON.stringify(decision, null, 2) + "\n"); }
 

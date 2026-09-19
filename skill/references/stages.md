@@ -18,7 +18,7 @@ Read the section for the stage you are running. Each has: who does it, what it n
 **Owner reads:** Claim, Flows, Acceptance, and Risks and prerequisites. They say yes or no, and the yes is stamped into the state file.
 **Stop:** S1, S7.
 
-**Routing:** before the review is commissioned, `route.cjs --stage plan` measures the change. At or below `skipAtOrBelow` the adversarial review is skipped and `codex_review: skipped` is recorded with the reason; above it, the review runs at the tier named. The owner’s yes is required either way and is never routed.
+**Routing:** before the review is commissioned, `route.cjs --stage plan --head <sha>` measures the change. At or below `skipAtOrBelow` the adversarial review is skipped and `codex_review: skipped` is recorded with the reason; above it, the review runs at the tier named. The owner’s yes is required either way and is never routed.
 
 Detail on the sections:
 1. **Claim**, one paragraph, in the words the customer or the owner would use: what they will observe that they cannot observe today.
@@ -41,7 +41,7 @@ Route: `/grill-me-codex` when any design question is open; `/codex-review` when 
 **Owner reads:** nothing. Prove is what makes this safe.
 **Stop:** S1. A dirty tree also stops it before it starts. Codex never commits, and nothing is committed in this stage at all.
 
-**Routing:** `route.cjs --stage build` chooses the effort, capped below the top rung: if a build needs the top rung, the plan was not finished.
+**Routing:** `route.cjs --stage build --head <sha>` chooses the effort, capped below the top rung: if a build needs the top rung, the plan was not finished.
 
 How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-c model_reasoning_effort="<the routed effort>"`. Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
 
@@ -53,7 +53,7 @@ How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_C
 **Owner reads:** "6 guarantees, 6 seen to fail, on <short sha>, proof command green." If it is 5 of 6, the ledger names the sixth and why, and the Claim no longer promises it.
 **Stop:** S2.
 
-**Retro:** after the PR exists, `node scripts/retro.cjs --collect --pr N --head <full sha>` reads the routing artifacts and appends one `retro.cjs --record decision` row and one `retro.cjs --record usage` row per routed stage. These are what questions 1, 2 and 4 are computed from, and they are free: the router already wrote them.
+**Retro:** after the PR exists, `node scripts/retro.cjs --collect --pr N --head <full sha>` reads the routing artifacts, matching each on the head it carries rather than on its filename, and appends one `retro.cjs --record decision` row and one `retro.cjs --record usage` row per routed stage. These are what questions 1, 2 and 4 are computed from, and they are free: the router already wrote them.
 
 How:
 - Read the full diff against the plan. Anything outside the plan's Change section is a deviation and is named in the PR body.
@@ -76,7 +76,7 @@ How:
 
 **Triage:** `triage.cjs` classifies a failed run as infra before the round is counted (S4), labels and orders every finding without removing any (S8), and counts distinct ideas for S3's comparison. The gate comment prints findings in, distinct ideas, and how many triage did not read.
 
-**Routing:** `route.cjs --stage gate` chooses the reviewer's effort. The gate floor means a cheap measurement can never buy a shallow review, and no measurement can lower a verdict.
+**Routing:** `route.cjs --stage gate --head <sha>` chooses the reviewer's effort. The gate floor means a cheap measurement can never buy a shallow review, and no measurement can lower a verdict.
 
 How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile` and `grok.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
 
@@ -85,7 +85,7 @@ On BLOCK: read Codex's findings as they land and begin the class rule on them. E
 ## 6. See it
 
 **Who:** a real browser drives the app on the lane. Gemini judges the screenshots against the plan's Flows. Claude adjudicates Gemini the way it adjudicates Codex and Grok.
-**Needs:** `stages.gate.state = pass` at the current head, and the plan's Flows section. Routing decides whether this stage applies: `route.cjs --stage see` asks whether a customer would notice, and below the configured mark this stage writes `not_applicable` with the probability as its reason and returns; that needs no yes. With routing off, the fallback is the old test, a diff that touches nothing under `client/`. An unknown always runs.
+**Needs:** `stages.gate.state = pass` at the current head, and the plan's Flows section. Routing decides whether this stage applies: `route.cjs --stage see --head <sha>` asks whether a customer would notice, and below the configured mark this stage writes `not_applicable` with the probability as its reason and returns; that needs no yes. With routing off, the fallback is the old test, a diff that touches nothing under `client/`. An unknown always runs.
 **Produces:** per named flow: a before screenshot, an after screenshot, Gemini's one-paragraph read, and pass or fail, attached to the PR under the See it section; and `stages.see` with `head`, `flows`, `passed`, `failed`.
 **Owner reads:** the screenshots. The one stage where they judge the work directly.
 **Stop:** see "What Ship accepts" below, enforced by Ship's pre-flight.

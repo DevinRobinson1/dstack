@@ -87,17 +87,17 @@ Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the bo
 
 ## What a stage costs
 
-Stages that spend measure the change first: `node scripts/route.cjs --stage <stage> --out .dstack/routing/<stage>-<sha>.json`. Jev measures, `dstack.config.json` prices, `references/routing.md` is the contract.
+Stages that spend measure the change first: `route.cjs --stage <stage> --head <sha> --out .dstack/routing/<stage>-<sha>.json`. The head is required: Retro attributes an artifact by the head it carries, not its filename. Jev measures, `dstack.config.json` prices, `references/routing.md` is the contract.
 
 A tier is a class of work. The catalog's `serves` line says which models can do it; the router picks the cheapest one already on that line. `--explain` prints the comparison.
 
-It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not on a glob. With no key or `enabled: false`, every stage runs at its default and says so.
+It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice. With no key or `enabled: false`, every stage runs at its default and says so.
 
 ## Reading the review
 
-Gate and Plan also triage: `triage.cjs` judges whether a failed run was infra, ranks findings and class-rule hits, counts distinct ideas for S3, and holds back a plan that cannot carry a review. `references/triage.md` is the contract, and S8 is enforced in code: a reading may only add work or add caution.
+Gate and Plan also triage: `triage.cjs` judges whether a run failed on infra, ranks findings and class-rule hits, counts distinct ideas for S3, and holds back an unreviewable plan. `references/triage.md` is the contract, and S8 is enforced in code: a reading may only add work or add caution.
 
-Retro reads outcomes back: `retro.cjs --fit` says which config numbers the evidence disagrees with, and which it cannot judge yet (S9). Contract: `references/retro.md`.
+Retro reads outcomes back: `retro.cjs --fit` says which config numbers the evidence disagrees with, and which it cannot judge yet (S9). `references/retro.md`.
 
 ## Pre-flight
 
@@ -127,4 +127,4 @@ If any line is wrong, fix it before delivering. Not after.
 
 ## Style
 
-No em dashes anywhere: not in code, comments, tests, PR bodies, or this file. Every commit and PR ends with the session's attribution line.
+No em dashes anywhere, in anything. Every commit and PR ends with the session's attribution line.

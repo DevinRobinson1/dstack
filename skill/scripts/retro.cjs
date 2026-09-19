@@ -36,12 +36,16 @@ const LEDGER = ".dstack/retro/ledger.jsonl";
 // "12:undefined", matches no decision, and takes that decision out of every
 // rate. Nothing errors. The PR simply stops existing, and the report reads as
 // though there were fewer PRs rather than as though one was lost.
+// Field and type. Presence alone is not enough: an outcome carrying pr and
+// head but no `blocked` reads as blocked:false, so a round that reported
+// nothing is counted as a round that passed. Silence is not a value, and
+// inventing a result is the one thing this ledger may never do.
 const ROW_SCHEMA = {
-  decision:     { required: ["pr", "head", "stage"] },
-  outcome:      { required: ["pr", "head"] },
-  usage:        { required: ["stage"] },
-  adjudication: { required: ["pr", "label"] },
-  ship:         { required: ["pr"] },
+  decision:     { required: { pr: "number", head: "string", stage: "string" } },
+  outcome:      { required: { pr: "number", head: "string", blocked: "boolean" } },
+  usage:        { required: { stage: "string", in: "number", out: "number" } },
+  adjudication: { required: { pr: "number", label: "string", confirmed: "boolean" } },
+  ship:         { required: { pr: "number", rounds: "number" } },
 };
 const TYPES = new Set(Object.keys(ROW_SCHEMA));
 
@@ -52,7 +56,13 @@ const RESERVED_KEYS = new Set(["t"]);
 function missingFields(entry) {
   const schema = ROW_SCHEMA[entry && entry.t];
   if (!schema) return null;
-  return schema.required.filter((f) => entry[f] === undefined || entry[f] === null || entry[f] === "");
+  const bad = [];
+  for (const [field, want] of Object.entries(schema.required)) {
+    const v = entry[field];
+    if (v === undefined || v === null || v === "") { bad.push(`${field} (missing)`); continue; }
+    if (typeof v !== want) bad.push(`${field} (must be a ${want}, got ${typeof v})`);
+  }
+  return bad;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,29 +218,39 @@ function fit(rows, config) {
     riskFinding = { question: "Does the risk index predict how many gate rounds a change takes?", enough: false, n: paired.length,
                     why: `not enough evidence yet: needs ${mins.minPairs - paired.length} more shipped PRs with a risk reading` };
   } else {
-    // Split by index, not by value. Splitting on `risk > median` empties the
-    // upper half whenever the median IS the upper value, which is what a
-    // bimodal set looks like: ten changes at 1.0 and ten at 3.0 is the
-    // clearest signal this question could get, and value splitting discards it.
-    const sorted = [...paired].sort((a, b) => a.risk - b.risk);
-    const half = Math.floor(sorted.length / 2);
-    const lo = sorted.slice(0, half), hi = sorted.slice(half);
-    const spreadInRisk = sorted[sorted.length - 1].risk - sorted[0].risk;
+    // Splitting on a value empties the upper half when the median IS the upper
+    // value. Splitting on an index puts equal risks on both sides, so "above
+    // the median" holds rows whose risk matches the group below it and the
+    // answer turns on input order among ties. Neither is a split on risk.
+    //
+    // So: search the distinct risk values for a boundary giving two cohorts of
+    // adequate size whose risks genuinely differ, and take the most balanced.
+    // If none exists, this sample cannot answer the question at any size.
     const avg = (xs) => xs.reduce((s, p) => s + p.rounds, 0) / xs.length;
-    // The minimum was on the total, and the arithmetic runs on the two halves.
-    // A constant risk clears the total and leaves nothing to split on.
-    if (!lo.length || !hi.length || spreadInRisk === 0) {
+    const minCohort = Math.max(3, Math.floor(mins.minPairs / 4));
+    const distinct = [...new Set(paired.map((p) => p.risk))].sort((a, b) => a - b);
+    let best = null;
+    for (const t of distinct.slice(0, -1)) {
+      const loT = paired.filter((p) => p.risk <= t), hiT = paired.filter((p) => p.risk > t);
+      if (loT.length < minCohort || hiT.length < minCohort) continue;
+      const balance = Math.abs(loT.length - hiT.length);
+      if (!best || balance < best.balance) best = { t, lo: loT, hi: hiT, balance };
+    }
+    if (!best) {
       riskFinding = { question: "Does the risk index predict how many gate rounds a change takes?", enough: false, n: paired.length,
-                      why: `not enough evidence yet: all ${paired.length} shipped PRs measured the same risk, so there is nothing to split on` };
+                      why: distinct.length < 2
+                        ? `not enough evidence yet: all ${paired.length} shipped PRs measured the same risk, so there is nothing to split on`
+                        : `not enough evidence yet: no risk boundary splits these ${paired.length} PRs into two groups of at least ${minCohort} with genuinely different risk` };
       const all2 = findings.concat([riskFinding]);
       for (const f of all2) if (typeof f.n !== "number") throw new Error(`retro emitted a finding with no sample count: ${f.question}`);
       return { findings: all2, shapes, rows: rows.length };
     }
+    const lo = best.lo, hi = best.hi;
     const diff = avg(hi) - avg(lo);
     riskFinding = { question: "Does the risk index predict how many gate rounds a change takes?", enough: true, finding: diff < 0.5, n: paired.length,
                     why: diff < 0.5
-                      ? `it does not: above the median risk ${avg(hi).toFixed(1)} rounds, below it ${avg(lo).toFixed(1)}. The index is not predicting anything.`
-                      : `above the median risk ${avg(hi).toFixed(1)} rounds, below it ${avg(lo).toFixed(1)}` };
+                      ? `it does not: above risk ${best.t} (n=${hi.length}) ${avg(hi).toFixed(1)} rounds, at or below (n=${lo.length}) ${avg(lo).toFixed(1)}. The index is not predicting anything.`
+                      : `above risk ${best.t} (n=${hi.length}) ${avg(hi).toFixed(1)} rounds, at or below (n=${lo.length}) ${avg(lo).toFixed(1)}` };
   }
 
   // Every finding carries its sample count, or it is not a finding.
@@ -252,14 +272,19 @@ function collectDecisions(dir, head) {
   let names = [];
   try { names = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && !n.startsWith("state-")); } catch { return []; }
   if (!head) return [];
-  const short = String(head).slice(0, 7);
-  names = names.filter((n) => n.includes(short) || n.includes(String(head)));
+
   const out = [];
   for (const n of names) {
     let d;
     try { d = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8")); } catch { continue; }
     if (!d || !d.stage) continue;
-    out.push({ t: "decision", stage: d.stage, tier: d.tier || null, model: d.model || null, risk: d.risk,
+    // Provenance is carried, never inferred. A filename gives seven characters
+    // and a head is forty; two commits share a seven character prefix often
+    // enough that an old PR's artifact would be attributed to this one, join
+    // to this one's outcome, and report on work that never happened. An
+    // artifact with no head is skipped rather than guessed at.
+    if (d.head !== head) continue;
+    out.push({ t: "decision", head: d.head, stage: d.stage, tier: d.tier || null, model: d.model || null, risk: d.risk,
                confidence: d.confidence, surface: d.surface || null, routed: !!d.routed, escalated: !!d.escalated,
                floor: d.floorApplied || null, est_cost: d.cost == null ? null : d.cost });
     // The artifact already carries what the router actually spent. Question 4

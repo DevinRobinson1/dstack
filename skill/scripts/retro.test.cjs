@@ -87,7 +87,7 @@ const CASES = [
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     const f = path.join(d, "l.jsonl");
     const bad = r.record({ t: "vibes", pr: 1 }, { file: f });
-    const off = r.record({ t: "ship", pr: 1 }, { file: f, enabled: false });
+    const off = r.record({ t: "ship", pr: 1, rounds: 2 }, { file: f, enabled: false });
     const exists = fs.existsSync(f);
     fs.rmSync(d, { recursive: true, force: true });
     return [bad.ok === false, /needs t as one of/.test(bad.reason), off.ok === false, /retro is off/.test(off.reason), exists === false];
@@ -131,7 +131,7 @@ const CASES = [
   ["collect emits a usage row beside the decision, from what the router spent", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     fs.writeFileSync(path.join(d, "gate-abc.json"), JSON.stringify({
-      stage: "gate", tier: "max", model: "m", risk: 2.3, cost: 0.5,
+      stage: "gate", head: "abc", tier: "max", model: "m", risk: 2.3, cost: 0.5,
       usage: { input_tokens: 984, output_tokens: 157 },
     }));
     const rows = r.collectDecisions(d, "abc");
@@ -143,7 +143,7 @@ const CASES = [
   }],
   ["a routing artifact with no usage block yields a decision and no usage row", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
-    fs.writeFileSync(path.join(d, "plan-abc.json"), JSON.stringify({ stage: "plan", tier: "deep", model: "m" }));
+    fs.writeFileSync(path.join(d, "plan-abc.json"), JSON.stringify({ stage: "plan", head: "abc", tier: "deep", model: "m" }));
     const rows = r.collectDecisions(d, "abc");
     fs.rmSync(d, { recursive: true, force: true });
     return [rows.length === 1, rows[0].t === "decision"];
@@ -191,7 +191,7 @@ const CASES = [
     const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
     return [f.enough === false, f.n === 20, !/NaN/.test(f.why), /all 20 shipped PRs measured the same risk/.test(f.why)];
   }],
-  ["C2b a real spread across the median still reports", () => {
+  ["C2b a clean bimodal set is split on a real risk boundary and reports", () => {
     const rows = [];
     for (let i = 0; i < 20; i++) rows.push(
       { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: i < 10 ? 1.0 : 3.0 },
@@ -200,12 +200,12 @@ const CASES = [
     return [f.enough === true, !/NaN/.test(f.why), f.n === 20];
   }],
   ["C4 a field may not overwrite the row type", () => {
-    return [r.RESERVED_KEYS.has("t"), r.ROW_SCHEMA.outcome.required.includes("head")];
+    return [r.RESERVED_KEYS.has("t"), r.ROW_SCHEMA.outcome.required.head === "string", r.ROW_SCHEMA.outcome.required.blocked === "boolean"];
   }],
   ["C5 collect takes only artifacts about the head being collected", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
-    fs.writeFileSync(path.join(d, "build-aaaaaaa.json"), JSON.stringify({ stage: "build", tier: "deep", model: "m" }));
-    fs.writeFileSync(path.join(d, "gate-bbbbbbb.json"), JSON.stringify({ stage: "gate", tier: "max", model: "m" }));
+    fs.writeFileSync(path.join(d, "build-aaaaaaa.json"), JSON.stringify({ stage: "build", head: "aaaaaaa1234", tier: "deep", model: "m" }));
+    fs.writeFileSync(path.join(d, "gate-bbbbbbb.json"), JSON.stringify({ stage: "gate", head: "bbbbbbb9999", tier: "max", model: "m" }));
     const mine = r.collectDecisions(d, "aaaaaaa1234");
     const noHead = r.collectDecisions(d, null);
     // Another PR's artifact recorded as this PR's would join to this PR's
@@ -217,7 +217,43 @@ const CASES = [
     return [mine.length === 1, mine[0].stage === "build", noHead.length === 0, emptyHead.length === 0];
   }],
   ["every row type declares required fields, so the class cannot return renamed", () => {
-    return [...r.TYPES].map((t) => Array.isArray(r.ROW_SCHEMA[t].required) && r.ROW_SCHEMA[t].required.length > 0);
+    return [...r.TYPES].map((t) => { const req = r.ROW_SCHEMA[t].required; return req && typeof req === "object" && Object.keys(req).length > 0 && Object.values(req).every((v) => ["string","number","boolean"].includes(v)); });
+  }],
+  // ---- round two ------------------------------------------------------
+  ["R1 ties may not straddle the boundary, so order among equals cannot decide", () => {
+    // 19 PRs at risk 1 and one at 3, with rounds arranged so an index split
+    // would report a relationship that is really just input order.
+    const rows = [];
+    for (let i = 0; i < 20; i++) rows.push(
+      { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: i === 19 ? 3 : 1 },
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false }, { t: "ship", pr: i, rounds: i < 10 ? 1 : 3 });
+    const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
+    return [f.enough === false, /no risk boundary/.test(f.why), f.n === 20];
+  }],
+  ["R2 an outcome that states no result is refused: silence is not a pass", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    const f = path.join(d, "l.jsonl");
+    const noResult = r.record({ t: "outcome", pr: 12, head: "abc" }, { file: f });
+    const wrongType = r.record({ t: "outcome", pr: 12, head: "abc", blocked: "yes" }, { file: f });
+    const noConfirm = r.record({ t: "adjudication", pr: 12, label: "major" }, { file: f });
+    const noTokens = r.record({ t: "usage", stage: "build" }, { file: f });
+    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: false }, { file: f });
+    fs.rmSync(d, { recursive: true, force: true });
+    return [noResult.ok === false, /blocked \(missing\)/.test(noResult.reason),
+            wrongType.ok === false, /must be a boolean, got string/.test(wrongType.reason),
+            noConfirm.ok === false, noTokens.ok === false, ok.ok === true];
+  }],
+  ["R3 provenance is carried, not read off a filename", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    // Two heads sharing a seven character prefix, which a filename cannot tell apart.
+    fs.writeFileSync(path.join(d, "gate-abcdef0.json"), JSON.stringify({ stage: "gate", head: "abcdef011111", tier: "max", model: "old" }));
+    fs.writeFileSync(path.join(d, "build-abcdef0.json"), JSON.stringify({ stage: "build", head: "abcdef022222", tier: "deep", model: "mine" }));
+    fs.writeFileSync(path.join(d, "plan-noheadx.json"), JSON.stringify({ stage: "plan", tier: "deep", model: "legacy" }));
+    const got = r.collectDecisions(d, "abcdef022222");
+    fs.rmSync(d, { recursive: true, force: true });
+    return [got.length === 1, got[0].model === "mine", got[0].head === "abcdef022222",
+            // An artifact with no head is skipped rather than guessed at.
+            got.every((x) => x.model !== "legacy")];
   }],
   ["the gate adapter is one function, and reads BLOCK and infra", () => {
     const b = r.adaptGateRounds({ head: "abc", round: 2, majors: 3, verdict: "BLOCK" });

@@ -265,11 +265,18 @@ if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not poin
         problems.push(`retro: nothing produces a "${type}" row. A contract in stages.md must name "retro.cjs --record ${type}", or the questions it feeds can never be answered.`);
       // A sixth row type added without required fields is this class returning
       // under a new name, so the schema is required to keep pace with TYPES.
-      if (!mod.ROW_SCHEMA[type] || !Array.isArray(mod.ROW_SCHEMA[type].required) || !mod.ROW_SCHEMA[type].required.length)
+      const req = mod.ROW_SCHEMA[type] && mod.ROW_SCHEMA[type].required;
+      if (!req || typeof req !== "object" || !Object.keys(req).length || !Object.values(req).every((v) => ["string", "number", "boolean"].includes(v)))
         problems.push(`retro: row type "${type}" declares no required fields, so an unusable row of that type can be written`);
     }
   } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
 })();
+
+// A routing invocation without --head writes an artifact Retro cannot
+// attribute, so the decision is silently dropped from every rate.
+for (const m of (read("references/stages.md").match(/route\.cjs --stage \w+[^`]*/g) || [])) {
+  if (!/--head/.test(m)) problems.push(`stages.md: "${m.trim()}" does not pass --head, so its artifact cannot be attributed to a commit`);
+}
 
 // Prices go stale the day a provider changes them. Something must say when to
 // check, or catalog.cjs is a tool nobody is told to run.
