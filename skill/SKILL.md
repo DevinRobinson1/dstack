@@ -19,27 +19,9 @@ The owner is one named person, read from `owner.name` in `dstack.config.json`. I
 
 ## The state file
 
-Every stage reads and writes `.dstack/state.json` at the lane root; Intake creates it. Nothing about where a change is lives in memory.
+Every stage reads and writes `.dstack/state.json` at the lane root; Intake creates it. Nothing about where a change is lives in memory. `references/state.md` has the field shape; read it when you write the file.
 
-    {
-      "pr": 1265,
-      "head": "<full sha the evidence is about>",
-      "plan_file": "docs/superpowers/plans/2026-09-12-fs58.md",
-      "runner_available": false,
-      "stages": {
-        "intake":  { "state": "done", "at": "<iso>", "artifact": ".dstack/work-order.json" },
-        "plan":    { "state": "done", "at": "<iso>", "codex_review": "APPROVED", "owner_yes": "<iso>" },
-        "build":   { "state": "done", "at": "<iso>", "by": "codex", "fix_rounds": 1 },
-        "prove":   { "state": "done", "at": "<iso>", "head": "<full sha>", "guarantees": 6, "seen_to_fail": 6, "tool": "scripts/ci/mutate.cjs" },
-        "gate":    { "state": "pass", "at": "<iso>", "head": "<full sha>", "round": 2, "majors": 0, "runner": "review-loop3.sh", "concurrency": 1 },
-        "see":     { "state": "not_built", "note": "UI claims are on a source guard only" },
-        "ship":    { "state": "pending" },
-        "watch":   { "state": "not_built", "note": "..." },
-        "retro":   { "state": "not_built", "note": "..." }
-      }
-    }
-
-Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_applicable`, `not_built`, `unknown`, `stale`. A `skipped` entry carries `"owner_yes": "<iso>"` or it is invalid. Whenever the plan file or the branch head changes, every stage after the one that changed it is set to `stale` and must run again. `codex_review` on the plan entry is `APPROVED` or `skipped`; the plan itself is `done` only with `owner_yes`.
+Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_applicable`, `not_built`, `unknown`, `stale`. A `skipped` entry carries `"owner_yes": "<iso>"` or it is invalid. Whenever the plan file or the branch head changes, every stage after the one that changed it is set to `stale` and must run again. A routed stage records its `tier` and `model`; Gate also records `distinct` for S3.
 
 `/dstack` with no argument prints the state as a table and names the next stage.
 
@@ -47,17 +29,17 @@ Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_appl
 
 `/dstack <stage>` runs one stage. Read that stage's contract in `references/stages.md` first. Never run a stage from memory.
 
-| # | Stage | Command | Who | Produces | Owner reads |
-|---|---|---|---|---|---|
-| 1 | Intake | `/dstack intake` | shop intake, or the owner | the state file and a work order with the ticket block | nothing yet |
-| 2 | Plan | `/dstack plan` | Claude writes, Codex reviews, the owner says yes | the plan and its review log, committed | the claim, the acceptance criteria, the named flows |
-| 3 | Build | `/dstack build` | Codex at medium effort | a diff and Codex's report | nothing |
-| 4 | Prove | `/dstack prove` | Claude | the proof ledger, the commit, the pushed branch, the PR with its evidence body | "N guarantees, N seen to fail, on <sha>" |
-| 5 | Gate | `/dstack gate` | Codex at xhigh + Grok in parallel, Claude adjudicates | verdict and two reviews, one PR comment | PASS or BLOCK, one line per major |
-| 6 | See it | `/dstack see` | a real browser, Gemini judges, Claude adjudicates | screenshots and pass or fail per named flow | the screenshots |
-| 7 | Ship | `/dstack ship` | the owner says merge, Claude merges | a merge, then ticket, email and deploy outcomes as separate states | one row per PR |
-| 8 | Watch | `/dstack watch` | automated, then Claude | a deploy report | one line per deploy |
-| 9 | Retro | `/dstack retro` | Claude | rounds per PR, time per shipped PR, infra rate | one table a week |
+| # | Stage | Command | Who | Owner reads |
+|---|---|---|---|---|
+| 1 | Intake | `/dstack intake` | shop intake, or the owner | nothing yet |
+| 2 | Plan | `/dstack plan` | Claude writes, Codex reviews, the owner says yes | the claim, the acceptance criteria, the named flows |
+| 3 | Build | `/dstack build` | the builder, at the routed effort | nothing |
+| 4 | Prove | `/dstack prove` | Claude | "N guarantees, N seen to fail, on <sha>" |
+| 5 | Gate | `/dstack gate` | the reviewers in parallel at the routed effort, Claude adjudicates | PASS or BLOCK, one line per major |
+| 6 | See it | `/dstack see` | a real browser, Gemini judges, Claude adjudicates | the screenshots |
+| 7 | Ship | `/dstack ship` | the owner says merge, Claude merges | one row per PR |
+| 8 | Watch | `/dstack watch` | automated, then Claude | one line per deploy |
+| 9 | Retro | `/dstack retro` | Claude | one table a week |
 
 ## Stop rules
 
@@ -101,20 +83,22 @@ Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the bo
 
 ## Tools this routes to
 
-- Plan: `/grill-me-codex` when the design is open, `/codex-review` when it is not, with `PLAN_FILE` under `docs/superpowers/plans/`.
+- Plan: `/grill-me-codex` when the design is open, `/codex-review` when it is not.
 - Build: `/codex-build` with `SPEC_FILE` set to the plan file, at the effort Routing chose.
 - Ship: `gh pr merge --squash --match-head-commit <full sha>` after S5 and S6 hold.
-- Prove, Gate, See it, Watch, Retro: the scripts `references/stages.md` names (Plans 2 to 6), each `not_built` until it lands, carrying that file's note and fallback into the PR. Silence means unknown, never green.
+- Everything else: the scripts `references/stages.md` names. Each is `not_built` until it lands, carrying that file's note and fallback into the PR. Silence means unknown, never green.
 
 ## What a stage costs
 
-Stages that spend measure the change first: `node scripts/route.cjs --stage <stage> --out .dstack/routing/<stage>-<sha>.json`. Jev measures, `dstack.config.json` prices, `references/routing.md` is the contract; read it before changing a number.
+Stages that spend measure the change first: `node scripts/route.cjs --stage <stage> --out .dstack/routing/<stage>-<sha>.json`. Jev measures, `dstack.config.json` prices, `references/routing.md` is the contract.
 
-It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not when a path matched `client/`. With no key or `enabled: false`, every stage runs at its default and says so.
+A tier is a class of work. The catalog's `serves` line says which models can do it; the router picks the cheapest one already on that line. `--explain` prints the comparison.
+
+It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not on a path glob. With no key or `enabled: false`, every stage runs at its default and says so.
 
 ## Reading the review
 
-Gate and Plan also triage: `scripts/triage.cjs` judges whether a failed run was infra, ranks findings and class-rule grep hits, counts distinct ideas across rounds for S3, and holds a plan back that cannot carry a review. `references/triage.md` is the contract.
+Gate and Plan also triage: `scripts/triage.cjs` judges whether a failed run was infra, ranks findings and class-rule grep hits, counts distinct ideas for S3, and holds back a plan that cannot carry a review. `references/triage.md` is the contract.
 
 The invariant is S8, and it is enforced in code: a reading may only add work or add caution. Nothing is ever removed from what the adjudicator reads.
 
@@ -146,4 +130,4 @@ If any line is wrong, fix it before delivering. Not after.
 
 ## Style
 
-No em dashes anywhere: not in code, comments, tests, PR bodies, or this file. Every commit and PR ends with the attribution the session specifies.
+No em dashes anywhere: not in code, comments, tests, PR bodies, or this file. Every commit and PR ends with the session's attribution line.

@@ -17,7 +17,7 @@ const ROUTES = [
 const STAGES = ROUTES.map((r) => r[2]);
 const HEADINGS = ROUTES.map((r) => `## ${r[0]}. ${r[1]}`);
 const FIELDS = ["**Who:**", "**Needs:**", "**Produces:**", "**Owner reads:**", "**Stop:**"];
-const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md", "references/triage.md"];
+const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md", "references/triage.md", "references/state.md"];
 
 for (const f of files) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`${f}: missing`);
@@ -41,11 +41,10 @@ if (desc.length >= 300) problems.push(`SKILL.md: description is ${desc.length} c
 if (!/^[A-Z][a-z]+ /.test(desc)) problems.push("SKILL.md: description must start with an action verb");
 if (!/Use when/.test(desc)) problems.push("SKILL.md: description needs a Use when clause");
 const words = skill.split(/\s+/).filter(Boolean).length;
-// 1700 held for nine stages with no routing. Routing and triage added two
-// capabilities and two canonical stop rules (S7 and S8 are ~120 words that must
-// appear here verbatim). Raised once, deliberately, not shaved to fit.
-const WORD_LIMIT = 1900;
-if (words > WORD_LIMIT) problems.push(`SKILL.md: ${words} words, limit ${WORD_LIMIT}`);
+// 1700, unchanged since Plan 1. Routing and triage were fitted under it by
+// moving the state schema to references/state.md, not by moving the number.
+// A threshold that moves when it is inconvenient is the defect Plan 7 is about.
+if (words > 1700) problems.push(`SKILL.md: ${words} words, limit 1700`);
 
 // Routing table: each row is checked as its (number, name, command) tuple, in order.
 const rows = skill.split("\n").filter((l) => /^\|\s*\d+\s*\|/.test(l));
@@ -107,9 +106,12 @@ for (const section of ["## Claim", "## Evidence is about", "## Stages", "## Base
   if (!new RegExp(`^\\s*${section.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*$`, "m").test(evidence)) problems.push(`pr-evidence.md: missing ${section}`);
 }
 
-// The state file example in SKILL.md names every stage, and the vocabulary includes stale.
-for (const s of STAGES) if (!new RegExp(`"${s}":\\s*\\{`).test(skill)) problems.push(`SKILL.md: state file example has no "${s}" entry`);
+// The state schema lives in its own reference and names every stage; SKILL.md
+// keeps only the vocabulary, which is all routing a stage actually needs.
+const state = read("references/state.md");
+for (const s of STAGES) if (!new RegExp(`"${s}":\\s*\\{`).test(state)) problems.push(`state.md: state file example has no "${s}" entry`);
 if (!/`stale`/.test(skill)) problems.push("SKILL.md: state vocabulary must include stale");
+if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not point at references/state.md");
 
 // Routing: the policy is data, so the verifier reads the data and not the prose.
 // Every tier a rule names must exist in the ladder, every weight must name a
