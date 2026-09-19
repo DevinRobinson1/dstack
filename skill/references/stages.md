@@ -16,7 +16,9 @@ Read the section for the stage you are running. Each has: who does it, what it n
 **Needs:** `stages.intake.state = done` and `.dstack/work-order.json`.
 **Produces:** the plan at `docs/superpowers/plans/<YYYY-MM-DD>-<name>.md` and its review log at `<same>.review-log.md`, both committed on the lane branch in a commit whose message starts `plan:`, so Build's clean-tree check passes; `stages.plan` with `codex_review` (`APPROVED` or `skipped`) and `owner_yes`; and `plan_file` at the top of the state file. The plan contains, in this order, each non-empty: Claim, Class, Change, Proof command (with the guarantee list), Flows (or the line `Flows: none, no client/ change`), Out of scope, Acceptance, Risks and prerequisites (or `none identified`), Rollback.
 **Owner reads:** Claim, Flows, Acceptance, and Risks and prerequisites. They say yes or no, and the yes is stamped into the state file.
-**Stop:** S1.
+**Stop:** S1, S7.
+
+**Routing:** before the review is commissioned, `route.cjs --stage plan` measures the change. At or below `skipAtOrBelow` the adversarial review is skipped and `codex_review: skipped` is recorded with the reason; above it, the review runs at the tier named. The owner’s yes is required either way and is never routed.
 
 Detail on the sections:
 1. **Claim**, one paragraph, in the words the customer or the owner would use: what they will observe that they cannot observe today.
@@ -39,7 +41,9 @@ Route: `/grill-me-codex` when any design question is open; `/codex-review` when 
 **Owner reads:** nothing. Prove is what makes this safe.
 **Stop:** S1. A dirty tree also stops it before it starts. Codex never commits, and nothing is committed in this stage at all.
 
-How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-c model_reasoning_effort="medium"`. Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
+**Routing:** `route.cjs --stage build` chooses the effort, capped below the top rung: if a build needs the top rung, the plan was not finished.
+
+How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-c model_reasoning_effort="<the routed effort>"`. Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
 
 ## 4. Prove
 
@@ -64,7 +68,9 @@ How:
 **Needs:** `stages.prove.state = done`, a pushed branch whose head equals `stages.prove.head`, a PR body with the Proof ledger section non-empty, and `shop.config.json` with `autoMergeOnPass` false or absent (if true, refuse under S6).
 **Produces:** the round directory `.4-brain-out/<date>-pr<N>/round-<n>/` with `verdict.json`, and the two reviews at the paths `verdict.json` names in `codex.reviewFile` and `grok.reviewFile`, both of which must exist; a PR comment with PASS or BLOCK, the major count, one line per major, and the class-rule answers if BLOCK; and `stages.gate` with `round`, `majors`, `head`, `runner`, `concurrency`. The PR Gate line also states the runner: `three-wide runner: not_built; review-loop3.sh, concurrency 1` until Plan 3 lands.
 **Owner reads:** PASS or BLOCK, the major count, one sentence per major.
-**Stop:** S3, S4, S6.
+**Stop:** S3, S4, S6, S7.
+
+**Routing:** `route.cjs --stage gate` chooses the reviewer's effort. The gate floor means a cheap measurement can never buy a shallow review, and no measurement can lower a verdict.
 
 How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile` and `grok.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
 
@@ -73,7 +79,7 @@ On BLOCK: read Codex's findings as they land and begin the class rule on them. E
 ## 6. See it
 
 **Who:** a real browser drives the app on the lane. Gemini judges the screenshots against the plan's Flows. Claude adjudicates Gemini the way it adjudicates Codex and Grok.
-**Needs:** `stages.gate.state = pass` at the current head, and the plan's Flows section. If the diff touches nothing under `client/`, this stage writes `not_applicable` with the reason and returns; that needs no yes.
+**Needs:** `stages.gate.state = pass` at the current head, and the plan's Flows section. Routing decides whether this stage applies: `route.cjs --stage see` asks whether a customer would notice, and below the configured mark this stage writes `not_applicable` with the probability as its reason and returns; that needs no yes. With routing off, the fallback is the old test, a diff that touches nothing under `client/`. An unknown always runs.
 **Produces:** per named flow: a before screenshot, an after screenshot, Gemini's one-paragraph read, and pass or fail, attached to the PR under the See it section; and `stages.see` with `head`, `flows`, `passed`, `failed`.
 **Owner reads:** the screenshots. The one stage where they judge the work directly.
 **Stop:** see "What Ship accepts" below, enforced by Ship's pre-flight.
@@ -123,10 +129,11 @@ How: `scripts/ci/retro.cjs` (Plan 6). Until it lands, by hand from the log, and 
 Canonical. Identical to SKILL.md's block; the verifier fails if they differ.
 
 <!-- dstack-stop-rules-begin -->
-- **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change under twenty lines the Codex review may be skipped; the owner’s yes may never be skipped.
+- **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change Routing measures as skippable, or under twenty lines with routing off, the Codex review may be skipped; the owner’s yes may never be skipped.
 - **S2 Prove.** A mutation that stays green is a test that proves nothing. Fix the test or drop the guarantee. A dropped guarantee is removed from the plan's Acceptance and from the PR Claim in the same commit, and if Acceptance changed, Plan runs again for the owner’s yes.
 - **S3 Gate.** Compare each round's in-scope major count to the previous real round's. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
 - **S4 Gate.** An `infra` verdict is not a verdict. Retry once. If it is infra again, hold and say so in the state file.
 - **S5 Ship.** A ticket-backed PR ships in exactly one of two ways. Closes-ticket: the marker from `ticket-directive.cjs --lookup FS-NN` is on the PR and matches the live id and customer message count. Partial-fix: no marker, and the PR body says why the ticket cannot close and what the customer must do, and the owner’s yes names it as a partial fix. Any other shape does not merge.
 - **S6 Ship.** Nothing merges on a conversation. Only the owner’s explicit say-so, only a gate PASS whose `head` equals the live PR head, only `--match-head-commit <full sha>`. The gate runner is invoked with auto-merge off, and Gate refuses to run if `shop.config.json` has `autoMergeOnPass` true.
+- **S7 Routing.** Routing decides what a stage costs, never what it concludes. A router that is missing, slow, or unsure routes to the stage default and says so on the PR. It never routes below a floor, never turns a BLOCK into a PASS, and never skips a stage the owner’s yes is required for. Uncertainty routes up, never down.
 <!-- dstack-stop-rules-end -->

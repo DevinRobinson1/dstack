@@ -14,6 +14,8 @@ Two rules carry most of the weight:
 
 **A test does not count until it has been seen to fail.** Every regression proof mutates the fix back out, watches the test go red for the stated reason, and restores it. A green suite proves the suite ran. It does not prove the suite is watching anything.
 
+**A decision made on a proxy is not a measurement.** A plan review used to be skipped when a change was "under twenty lines", and browser verification used to be skipped when no file under `client/` was touched. A twelve line change to session handling is skippable under the first. A server side change that alters what a customer sees is invisible to the second. Both are now measured instead of guessed, and the measurement is written on the pull request.
+
 **A blocked round is a hypothesis, not a verdict.** Findings get adjudicated against source, not accepted because a model was confident. On a measured sample, a cross-model review produced two blockers that would genuinely have shipped and thirteen rejected findings, two of them rated blocker and guarded on the very next line.
 
 ## The nine stages
@@ -32,6 +34,25 @@ Two rules carry most of the weight:
 
 Each stage declares who runs it, what it needs, what it produces, what the owner reads, and the one condition that stops the line. The stop rules are canonical text held byte-identical in two files, and a verifier fails if they ever drift apart.
 
+## What each stage costs
+
+Every stage used to cost the same. The builder ran at medium effort and the gate ran at the top rung, whether the change was a typo fix or a rewrite of the billing path.
+
+Stages that spend now measure the change first, in a single call to a [System One model](https://typesafe.ai/blog/introducing-system-one-models-and-jev): how far it reaches, how hard it is to undo, how much it leaves to judgment, whether it touches authentication or money, and whether it follows a pattern already in the codebase. Those readings become a risk index, the index falls into a band, and the band names a tier.
+
+The split that matters is that **the model measures and the config prices, and they are different files**. No model name, effort level or price appears in a question, so the question set does not go stale when the lineup turns over. Which model runs a deep review is a line in `dstack.config.json`.
+
+Four rules bound it, and the fixtures in `skill/scripts/route.test.cjs` prove each one with no network and no API key:
+
+- **It never turns a gate into a pass.** Routing sets what a review costs. It has no opinion on the verdict.
+- **It never fails cheap.** No key, a timeout, a rate limit, a bad response: every one routes to the stage default, which is the tier Dstack used before routing existed. A failure buys what you had before, never less.
+- **It never fails quietly.** Every failure carries a sentence, and the sentence reaches the pull request body.
+- **It never sends the diff.** Paths, counts and the plan's own prose leave the machine. Source contents do not, and no setting turns that on.
+
+Uncertainty routes up, never down: a reading the model is not confident about costs a rung. Floors only ever raise, and there are deliberately no ceilings per surface, because a documentation change that measures as high risk is a misclassification and capping it would be the silent downgrade this whole process exists to remove.
+
+The full contract, including the seven further uses this opens up, is in [skill/references/routing.md](skill/references/routing.md). Routing is optional: one key turns it off and every stage returns to a fixed effort.
+
 ## Status
 
 Under construction, in the open. Plan 1 (the skill shell) is written, reviewed across three adversarial rounds, and dry-run proven. Plans 2 through 6 are not written yet.
@@ -44,6 +65,7 @@ Under construction, in the open. Plan 1 (the skill shell) is written, reviewed a
 | 4 | See it: real browser evidence | Not started |
 | 5 | Watch: deploy observation | Not started |
 | 6 | Retro: metrics that close the loop | Not started |
+| 7 | Jev routing: measured tiers, and the end of proxy heuristics | Built, proven, ungated |
 
 Plans and their full review logs live in [docs/plans](docs/plans). The argument is the artifact; it is kept whole on purpose.
 
@@ -53,6 +75,8 @@ Requires [Claude Code](https://claude.com/claude-code) and [Node.js](https://nod
 [`codex`](https://github.com/openai/codex) for planning review and gating, [`grok`](https://x.ai) for the product and operations lens, [`gemini`](https://github.com/google-gemini/gemini-cli) for breadth and screenshots.
 
 A missing CLI is announced once and that route is skipped. A missing CLI never silently downgrades a gate to a pass.
+
+Routing additionally reads `TYPESAFE_API_KEY` for the System One model that decides what each stage costs. It is optional. Without it, every stage runs at the fixed effort it used before routing existed, and says so.
 
 ```bash
 git clone https://github.com/DevinRobinson1/dstack.git

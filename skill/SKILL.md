@@ -7,15 +7,15 @@ description: Run a change through the owner’s eight-stage delivery process (Pl
 
 the owner’s stack, after gstack, for an owner who reads evidence and not code.
 
-**Announce at start:** "Running Dstack, stage: <stage>." Then echo the brains, one line: `codex <ver> / gemini <ver> / grok <ver>, models per CLI defaults`.
+**Announce at start:** "Running Dstack, stage: <stage>." Then echo the brains, one line: `codex <ver> / gemini <ver> / grok <ver>, routing <on at <tier> | off, <reason>>`.
 
 ## The principle
 
 The owner never reads code. They read evidence. Every stage turns a change into a **claim**, a **proof** of that claim, and an **independent verdict** on it, in plain language, on the pull request itself.
 
-If a stage cannot produce evidence they can read, it is not finished. If a stage is skipped, the state file records it and the PR body's Stages block says so, with their yes beside it.
+A stage that cannot produce evidence they can read is not finished. A skip is recorded in the state file and in the PR Stages block, with their yes beside it.
 
-The owner is one named person, read from `owner.name` in the project's `dstack.config.json`. If that file is missing or the key is unset, every stage that needs a yes stops and says so. Dstack never guesses who is allowed to approve a change.
+The owner is one named person, read from `owner.name` in `dstack.config.json`. If that file or key is missing, every stage needing a yes stops and says so. Dstack never guesses who may approve a change.
 
 ## The state file
 
@@ -34,18 +34,18 @@ Every stage reads and writes `.dstack/state.json` at the lane root; Intake creat
         "gate":    { "state": "pass", "at": "<iso>", "head": "<full sha>", "round": 2, "majors": 0, "runner": "review-loop3.sh", "concurrency": 1 },
         "see":     { "state": "not_built", "note": "UI claims are on a source guard only" },
         "ship":    { "state": "pending" },
-        "watch":   { "state": "not_built", "note": "deploy is unwatched; treat as unknown" },
-        "retro":   { "state": "not_built", "note": "counted by hand from review-loop.log" }
+        "watch":   { "state": "not_built", "note": "..." },
+        "retro":   { "state": "not_built", "note": "..." }
       }
     }
 
 Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_applicable`, `not_built`, `unknown`, `stale`. A `skipped` entry carries `"owner_yes": "<iso>"` or it is invalid. Whenever the plan file or the branch head changes, every stage after the one that changed it is set to `stale` and must run again. `codex_review` on the plan entry is `APPROVED` or `skipped`; the plan itself is `done` only with `owner_yes`.
 
-`/dstack` with no argument prints the state file as a table and names the next stage.
+`/dstack` with no argument prints the state as a table and names the next stage.
 
 ## Routing
 
-`/dstack <stage>` runs one stage. Read `references/stages.md` for that stage's contract before running it. Do not run a stage from memory.
+`/dstack <stage>` runs one stage. Read that stage's contract in `references/stages.md` first. Never run a stage from memory.
 
 | # | Stage | Command | Who | Produces | Owner reads |
 |---|---|---|---|---|---|
@@ -64,20 +64,21 @@ Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_appl
 Canonical. `references/stages.md` carries this block verbatim under the same heading and `scripts/verify.cjs` fails if the two differ by a character.
 
 <!-- dstack-stop-rules-begin -->
-- **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change under twenty lines the Codex review may be skipped; the owner’s yes may never be skipped.
+- **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change Routing measures as skippable, or under twenty lines with routing off, the Codex review may be skipped; the owner’s yes may never be skipped.
 - **S2 Prove.** A mutation that stays green is a test that proves nothing. Fix the test or drop the guarantee. A dropped guarantee is removed from the plan's Acceptance and from the PR Claim in the same commit, and if Acceptance changed, Plan runs again for the owner’s yes.
 - **S3 Gate.** Compare each round's in-scope major count to the previous real round's. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
 - **S4 Gate.** An `infra` verdict is not a verdict. Retry once. If it is infra again, hold and say so in the state file.
 - **S5 Ship.** A ticket-backed PR ships in exactly one of two ways. Closes-ticket: the marker from `ticket-directive.cjs --lookup FS-NN` is on the PR and matches the live id and customer message count. Partial-fix: no marker, and the PR body says why the ticket cannot close and what the customer must do, and the owner’s yes names it as a partial fix. Any other shape does not merge.
 - **S6 Ship.** Nothing merges on a conversation. Only the owner’s explicit say-so, only a gate PASS whose `head` equals the live PR head, only `--match-head-commit <full sha>`. The gate runner is invoked with auto-merge off, and Gate refuses to run if `shop.config.json` has `autoMergeOnPass` true.
+- **S7 Routing.** Routing decides what a stage costs, never what it concludes. A router that is missing, slow, or unsure routes to the stage default and says so on the PR. It never routes below a floor, never turns a BLOCK into a PASS, and never skips a stage the owner’s yes is required for. Uncertainty routes up, never down.
 <!-- dstack-stop-rules-end -->
 
 ## What may be skipped
 
 Exactly these, and each is recorded in the state file and in the PR Stages block:
 
-- Plan's Codex review, for a change under twenty lines: `codex_review: skipped` with `owner_yes`. The plan is still `done`.
-- See it, when the diff touches nothing under `client/`: `not_applicable`, which needs no yes.
+- Plan's Codex review, when Routing measures the change at or below `skipAtOrBelow`, or with routing off under twenty lines: `codex_review: skipped` with `owner_yes`. The plan is still `done`.
+- See it, when Routing says a customer would not notice, or with routing off the diff touches nothing under `client/`: `not_applicable`, which needs no yes.
 
 Nothing else may be skipped. Pre-flight refuses.
 
@@ -87,7 +88,7 @@ Codex builds from the frozen plan. Claude writes code only when `/codex-build`'s
 
 ## Reviews land before edits begin
 
-During Gate, read Codex's findings as soon as they arrive and start the class rule on them. Do not edit a file until both reviews have landed against the same `verdict.head`. The class rule needs every finding to name the class.
+During Gate, read Codex's findings as they arrive and start the class rule on them. Edit no file until both reviews have landed against the same `verdict.head`: the class rule needs every finding first.
 
 ## The class rule
 
@@ -100,13 +101,15 @@ Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the bo
 ## Tools this routes to
 
 - Plan: `/grill-me-codex` when the design is open, `/codex-review` when it is not, with `PLAN_FILE` under `docs/superpowers/plans/`.
-- Build: `/codex-build` with `SPEC_FILE` set to the plan file, the build invocation carrying `-c model_reasoning_effort="medium"`.
-- Prove: `scripts/ci/mutate.cjs` in the repo (Plan 2). Until it lands, `C:/tmp/mutate.py`, and the state records `"tool"`.
-- Gate: `scripts/agent-bridge/gate-pr.cjs` via the runner (Plan 3). Until it lands, `review-loop3.sh` one PR at a time; the state records `"runner_available": false`, and the PR Gate line says `three-wide runner: not_built; review-loop3.sh, concurrency 1`.
-- See it: `scripts/ci/see-it.cjs` (Plan 4). Until it lands, `not_built` with note `UI claims are on a source guard only`, which goes into the PR Stages block.
+- Build: `/codex-build` with `SPEC_FILE` set to the plan file, at the effort Routing chose.
 - Ship: `gh pr merge --squash --match-head-commit <full sha>` after S5 and S6 hold.
-- Watch: `scripts/ci/deploy-watch.cjs` (Plan 5). Until it lands, `not_built` with note `deploy is unwatched; treat as unknown`, into the merge report. Silence means unknown, never green.
-- Retro: `scripts/ci/retro.cjs` (Plan 6). Until it lands, `not_built` with note `counted by hand from review-loop.log`, and the table cites the log lines.
+- Prove, Gate, See it, Watch, Retro: the scripts `references/stages.md` names (Plans 2 to 6), each `not_built` until it lands, carrying that file's note and fallback into the PR. Silence means unknown, never green.
+
+## What a stage costs
+
+Stages that spend measure the change first: `node scripts/route.cjs --stage <stage> --out .dstack/routing/<stage>-<sha>.json`. Jev measures, `dstack.config.json` prices, `references/routing.md` is the contract; read it before changing a number.
+
+It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not when a path matched `client/`. With no key or `enabled: false`, every stage runs at its default and says so.
 
 ## Pre-flight
 
@@ -114,7 +117,7 @@ Before routing, load `.dstack/state.json`. If it does not exist and the stage is
 
     Dstack cannot run <stage>: <what is missing>.
     <stage> needs: <the predecessor state and the artifact sections named in stages.md>.
-    Run /dstack <previous stage> first. Only Plan's Codex review (under twenty lines) and See it (no client/ change) may be skipped, and a skip is recorded with the owner’s yes.
+    Run /dstack <previous stage> first. Only Plan's review and See it may be skipped, on the terms in What may be skipped, and a skip is recorded with the owner’s yes.
 
 This checks presence and non-emptiness only; the plan review and the owner's yes judge quality.
 
@@ -127,6 +130,7 @@ Before reporting a stage done, print and verify:
     - produced: <artifact path, or "not_built: <note>">
     - owner reads: <the sentence they will see>
     - PR body sections present and non-empty: <list, or "not applicable before Prove">
+    - routing: <tier, the one sentence why> | off, <reason>
     - stop rules checked: <S-ids that apply and their result>
     - em dashes in anything written: 0
 
@@ -134,4 +138,4 @@ If any line is wrong, fix it before delivering. Not after.
 
 ## Style
 
-No em dashes anywhere: not in code, comments, tests, PR bodies, or this file. Periods, commas, colons, parentheses. Every commit and PR ends with the attribution the session specifies.
+No em dashes anywhere: not in code, comments, tests, PR bodies, or this file. Every commit and PR ends with the attribution the session specifies.

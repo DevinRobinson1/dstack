@@ -24,6 +24,15 @@ The owner reads this and never the diff. Every section is present and non-empty,
     retro:   pending   | counted in the week of <date>   | not_built, counted by hand from review-loop.log lines <a>-<b>
     ticket:  FS-<n>, closes-ticket, marker verified against live id and message count   | FS-<n>, partial-fix, no marker, because <reason>, the owner yes <date>   | none
 
+    ## Routing
+    | Stage | Ran at | Why |
+    |---|---|---|
+    | plan  | <tier, or "review skipped"> | <the one sentence from the router> |
+    | build | <tier> | <the one sentence> |
+    | gate  | <tier> | <the one sentence> |
+    | see   | <applies, or not applicable> | <the one sentence> |
+    Router: <model> | off, <reason>. Cost: <input tokens> in, output free.
+
     ## Baseline proof
     Command: <the exact proof command from the plan>
     Result: <vitest's own summary line, verbatim>

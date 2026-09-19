@@ -17,7 +17,7 @@ const ROUTES = [
 const STAGES = ROUTES.map((r) => r[2]);
 const HEADINGS = ROUTES.map((r) => `## ${r[0]}. ${r[1]}`);
 const FIELDS = ["**Who:**", "**Needs:**", "**Produces:**", "**Owner reads:**", "**Stop:**"];
-const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md"];
+const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md"];
 
 for (const f of files) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`${f}: missing`);
@@ -82,7 +82,7 @@ const block = (text, name) => {
 const a = block(skill, "SKILL.md"), b = block(contract, "stages.md");
 if (a !== null && b !== null && a !== b) problems.push("stop-rule block differs between SKILL.md and stages.md");
 if (a) {
-  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
+  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
   if (!/autoMergeOnPass/.test(a)) problems.push("stop rules: S6 must name autoMergeOnPass");
   if (!/BOTH/.test(a)) problems.push("stop rules: S1 must require BOTH the Codex verdict and the owner's yes");
 }
@@ -98,13 +98,81 @@ for (const heading of ["## Pre-flight", "## Pre-delivery check"]) {
 
 // The PR template carries every stage line and every required section.
 for (const s of STAGES) if (!new RegExp(`^\\s*${s}:`, "m").test(evidence)) problems.push(`pr-evidence.md: Stages block has no line for ${s}`);
-for (const section of ["## Claim", "## Evidence is about", "## Stages", "## Baseline proof", "## Proof ledger", "## Acceptance", "## Class", "## Out of scope", "## Deviations from the plan", "## Not verified", "## Risks and prerequisites", "## Rollback"]) {
-  if (!evidence.includes(section)) problems.push(`pr-evidence.md: missing ${section}`);
+for (const section of ["## Claim", "## Evidence is about", "## Stages", "## Baseline proof", "## Proof ledger", "## Acceptance", "## Routing", "## Class", "## Out of scope", "## Deviations from the plan", "## Not verified", "## Risks and prerequisites", "## Rollback"]) {
+  // Line anchored: "## Routing-renamed" contains "## Routing" and must not pass.
+  if (!new RegExp(`^\\s*${section.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*$`, "m").test(evidence)) problems.push(`pr-evidence.md: missing ${section}`);
 }
 
 // The state file example in SKILL.md names every stage, and the vocabulary includes stale.
 for (const s of STAGES) if (!new RegExp(`"${s}":\\s*\\{`).test(skill)) problems.push(`SKILL.md: state file example has no "${s}" entry`);
 if (!/`stale`/.test(skill)) problems.push("SKILL.md: state vocabulary must include stale");
+
+// Routing: the policy is data, so the verifier reads the data and not the prose.
+// Every tier a rule names must exist in the ladder, every weight must name a
+// question the router actually asks, and the bands must climb.
+(function routing() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) { problems.push("dstack.config.example.json: missing, routing policy cannot be checked"); return; }
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); }
+  catch (e) { problems.push(`dstack.config.example.json: not valid json (${e.message})`); return; }
+  const r = cfg.routing;
+  if (!r) { problems.push("dstack.config.example.json: no routing block"); return; }
+
+  const order = r.ladderOrder || [];
+  if (order.length < 2) problems.push("routing: ladderOrder needs at least two tiers");
+  for (const t of order) if (!r.tiers || !r.tiers[t]) problems.push(`routing: ladderOrder names "${t}", which tiers does not define`);
+
+  for (const [stage, rule] of Object.entries(r.stages || {})) {
+    if (rule.kind === "binary") {
+      if (!rule.question) problems.push(`routing: stage ${stage} is binary with no question`);
+      if (typeof rule.appliesAtOrAbove !== "number") problems.push(`routing: stage ${stage} has no numeric appliesAtOrAbove`);
+      continue;
+    }
+    for (const key of ["floor", "default", "ceiling"]) {
+      if (!rule[key]) { problems.push(`routing: stage ${stage} has no ${key}`); continue; }
+      if (!order.includes(rule[key])) problems.push(`routing: stage ${stage}.${key} is "${rule[key]}", not a tier in the ladder`);
+    }
+    if (rule.floor && rule.ceiling && order.indexOf(rule.ceiling) < order.indexOf(rule.floor))
+      problems.push(`routing: stage ${stage} has ceiling "${rule.ceiling}" below floor "${rule.floor}"`);
+    if (rule.skipAtOrBelow && !order.includes(rule.skipAtOrBelow)) problems.push(`routing: stage ${stage}.skipAtOrBelow is "${rule.skipAtOrBelow}", not a tier in the ladder`);
+    // A default below the floor would make a router failure cheaper than a
+    // successful route, which is the one thing routing must never be.
+    if (rule.floor && rule.default && order.indexOf(rule.default) < order.indexOf(rule.floor))
+      problems.push(`routing: stage ${stage} defaults to "${rule.default}", below its own floor "${rule.floor}": a router failure would buy less than a success`);
+  }
+
+  for (const [surface, tier] of Object.entries(r.surfaceFloors || {})) {
+    if (surface.startsWith("$")) continue;
+    if (!order.includes(tier)) problems.push(`routing: surfaceFloors.${surface} is "${tier}", not a tier in the ladder`);
+  }
+
+  let prev = -Infinity;
+  for (const b of r.bands || []) {
+    if (!order.includes(b.tier)) problems.push(`routing: a band names tier "${b.tier}", not in the ladder`);
+    if (b.upTo <= prev) problems.push(`routing: bands must climb, ${b.upTo} follows ${prev}`);
+    prev = b.upTo;
+  }
+
+  // Every weighted name must be a question the router asks, or it silently
+  // contributes nothing and the index quietly means something else.
+  let asked = new Set();
+  try {
+    const route = require("./route.cjs");
+    for (const set of Object.values(route.QUESTION_SETS)) for (const k of Object.keys(set)) asked.add(k);
+  } catch (e) { problems.push(`route.cjs: does not load (${e.message})`); }
+  for (const name of Object.keys(r.weights || {})) {
+    if (name.startsWith("$")) continue;
+    if (!asked.has(name)) problems.push(`routing: weights name "${name}", which no question asks`);
+  }
+  for (const [stage, rule] of Object.entries(r.stages || {})) {
+    if (rule.kind === "binary" && rule.question && !asked.has(rule.question))
+      problems.push(`routing: stage ${stage} decides on "${rule.question}", which no question asks`);
+  }
+})();
+
+// The skill must tell the reader where the routing contract lives.
+if (!/references\/routing\.md/.test(skill)) problems.push("SKILL.md: does not point at references/routing.md");
 
 function report() {
   if (problems.length) {
@@ -112,7 +180,7 @@ function report() {
     for (const p of problems) console.error("  - " + p);
     process.exit(1);
   }
-  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical`);
+  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical, routing policy resolves`);
   process.exit(0);
 }
 report();

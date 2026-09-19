@@ -1,35 +1,33 @@
 {
   "$comment": "Copy to dstack.config.json at your project root and fill in. Dstack has no project knowledge of its own; everything below is what makes it yours. A stage whose command is unset refuses to run and names the missing key. It never guesses and never silently passes.",
-
   "owner": {
     "name": "Devin",
     "reads": "evidence",
     "$comment": "The one human whose yes is required at Plan and at Ship. 'reads' is 'evidence' or 'code' and decides how much explaining each stage owes."
   },
-
   "plan": {
     "dir": "docs/superpowers/plans",
     "reviewer": "codex",
     "skipUnderLines": 20,
     "$comment": "Changes under skipUnderLines may skip the adversarial plan review. The owner's yes may never be skipped."
   },
-
   "build": {
     "runner": "codex",
     "reasoningEffort": "medium",
     "$comment": "The builder runs fast because the plan already did the thinking. The reviewer runs deep. Set reasoning depth per invocation, never by editing a shared config mid-run."
   },
-
   "prove": {
     "harness": "scripts/mutate.cjs",
     "testCommand": "npm test --",
     "typecheckCommand": "npm run check",
     "$comment": "harness mutates each fix back out and requires the named test to fail for the named reason before restoring it."
   },
-
   "gate": {
     "command": "scripts/agent-bridge/gate-pr.cjs",
-    "brains": ["codex", "grok"],
+    "brains": [
+      "codex",
+      "grok"
+    ],
     "outDir": ".4-brain-out",
     "autoMerge": {
       "file": "scripts/agent-bridge/shop.config.json",
@@ -40,31 +38,131 @@
     "maxRoundsWithoutProgress": 2,
     "$comment": "Compare each round's in-scope major count to the previous real round. Infrastructure rounds do not count. Two comparisons with no fall means hand it to the owner, not a third round."
   },
-
   "seeIt": {
     "command": "npx playwright test --config=playwright.dstack.config.ts",
     "screenshotDir": ".dstack/screenshots",
-    "appliesWhenChanged": ["client/"],
+    "appliesWhenChanged": [
+      "client/"
+    ],
     "$comment": "Not applicable when no path in appliesWhenChanged is touched. 'Not applicable' is a state the verifier recognizes; 'skipped' is not."
   },
-
   "ship": {
     "mergeCommand": "gh pr merge --squash --match-head-commit {sha}",
     "requireBaseBranch": "main",
     "$comment": "The full head sha is mandatory. After a squash merge, ancestry is the wrong containment test; verify content per touched file instead."
   },
-
   "watch": {
     "command": null,
     "$comment": "Unset means Watch refuses and says so. Set it to whatever proves the deploy landed and nothing was interrupted mid-flight."
   },
-
   "ticket": {
     "lookupCommand": "node scripts/agent-bridge/ticket-directive.cjs --lookup {id}",
     "markerRequiredInPrBody": true,
     "$comment": "The marker is generated only by lookupCommand, never written by hand. It is what lets a merge resolve the ticket and email the customer who reported it."
   },
-
+  "routing": {
+    "$comment": "Jev decides what a stage costs, this file decides what that means. Questions describe the work and never name a model, so the question set does not go stale when the lineup changes. Read skill/references/routing.md before changing a number here.",
+    "enabled": true,
+    "endpoint": "https://api.typesafe.ai/v1/systemone",
+    "model": "jev-latest",
+    "apiKeyEnv": "TYPESAFE_API_KEY",
+    "timeoutMs": 6000,
+    "escalateBelowConfidence": 0.7,
+    "$comment_escalate": "A reading less certain than this routes one rung UP. Uncertainty costs money, never safety. Set to 0 to turn escalation off, which is not recommended.",
+    "ladderOrder": [
+      "skim",
+      "standard",
+      "deep",
+      "max"
+    ],
+    "tiers": {
+      "skim": {
+        "runner": "codex",
+        "effort": "low"
+      },
+      "standard": {
+        "runner": "codex",
+        "effort": "medium"
+      },
+      "deep": {
+        "runner": "codex",
+        "effort": "high"
+      },
+      "max": {
+        "runner": "codex",
+        "effort": "xhigh"
+      }
+    },
+    "weights": {
+      "blast_radius": 1.4,
+      "irreversibility": 1.2,
+      "security_relevant": 1.6,
+      "ambiguity": 0.9,
+      "mechanical": -1.2,
+      "$comment": "Every reading is normalized to 0 through 1 before it is weighted, so a score and a probability are comparable. Only mechanical is negative: following a pattern that is already in the codebase is the one thing that makes a change cheaper to get right."
+    },
+    "bands": [
+      {
+        "upTo": 1.0,
+        "tier": "skim"
+      },
+      {
+        "upTo": 2.2,
+        "tier": "standard"
+      },
+      {
+        "upTo": 3.6,
+        "tier": "deep"
+      },
+      {
+        "upTo": 99,
+        "tier": "max"
+      }
+    ],
+    "surfaceFloors": {
+      "auth": "max",
+      "money": "max",
+      "migration": "max",
+      "messaging": "deep",
+      "data": "deep",
+      "ui": "skim",
+      "internal": "skim",
+      "docs": "skim",
+      "$comment": "A floor only ever raises a tier. There are deliberately no surface ceilings: a docs change that measures as high risk is a misclassification, and capping it would be the silent downgrade this whole process exists to remove."
+    },
+    "stages": {
+      "plan": {
+        "kind": "ladder",
+        "floor": "skim",
+        "default": "deep",
+        "ceiling": "max",
+        "skipAtOrBelow": "skim",
+        "$comment": "Replaces skipUnderLines. A plan review is skipped when the change measures as low blast radius on a surface with no floor, not when someone counted lines. The owner's yes is still never skipped."
+      },
+      "build": {
+        "kind": "ladder",
+        "floor": "skim",
+        "default": "standard",
+        "ceiling": "deep",
+        "$comment": "surfaceFloorsApply is false because a surface floor is about how hard a change is scrutinized, and Build is not a scrutiny stage. The builder is capped below the top rung on purpose: if a build needs the top rung, the plan was not finished. Plan and Gate still honor every surface floor.",
+        "surfaceFloorsApply": false
+      },
+      "gate": {
+        "kind": "ladder",
+        "floor": "standard",
+        "default": "max",
+        "ceiling": "max",
+        "$comment": "The gate is the one stage allowed to cost whatever it costs. Its floor exists so a cheap measurement can never buy a shallow review."
+      },
+      "see": {
+        "kind": "binary",
+        "question": "user_visible",
+        "appliesAtOrAbove": 0.25,
+        "onUnknown": "the router could not say whether a customer would see this, so See it runs",
+        "$comment": "Replaces appliesWhenChanged. The threshold is low on purpose: a one in four chance that a customer sees a difference is enough to spend a browser run. This also catches the case the path glob never could, a server side change that alters what is on screen."
+      }
+    }
+  },
   "style": {
     "noEmDashes": true,
     "commitTrailer": "Co-Authored-By: Claude <noreply@anthropic.com>"
