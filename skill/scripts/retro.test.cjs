@@ -148,6 +148,21 @@ const CASES = [
     fs.rmSync(d, { recursive: true, force: true });
     return [rows.length === 1, rows[0].t === "decision"];
   }],
+  ["a value is coerced only when the number round trips to the same string", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    const f = path.join(d, "l.jsonl");
+    const { execFileSync } = require("child_process");
+    const cli = path.join(__dirname, "retro.cjs");
+    execFileSync(process.execPath, [cli, "--record", "outcome", "pr=12", "head=0055630", "round=2", "blocked=true", "--ledger", f], { cwd: d });
+    const row = r.load(f).rows[0];
+    fs.rmSync(d, { recursive: true, force: true });
+    return [
+      // A sha keeps every character. Losing a leading zero loses the join,
+      // and a PR that joins to nothing is invisible rather than absent.
+      row.head === "0055630",
+      row.pr === 12, row.round === 2, row.blocked === true,
+    ];
+  }],
   ["the gate adapter is one function, and reads BLOCK and infra", () => {
     const b = r.adaptGateRounds({ head: "abc", round: 2, majors: 3, verdict: "BLOCK" });
     const i = r.adaptGateRounds({ head: "abc", round: 1, verdict: "infra" });

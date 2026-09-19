@@ -277,7 +277,14 @@ function main() {
       const eq = kv.indexOf("=");
       if (eq === -1 || kv.startsWith("--")) continue;
       const k = kv.slice(0, eq), v = kv.slice(eq + 1);
-      entry[k] = v === "true" ? true : v === "false" ? false : (v !== "" && !isNaN(Number(v)) ? Number(v) : v);
+      // Coerce only when the number round trips back to the same string.
+      // "12" is a number. "0055630" is a sha: coercing it drops the leading
+      // zeros, the row never joins to its decision, and that PR silently
+      // contributes to no rate at all, which reads exactly like having fewer
+      // PRs rather than like losing one.
+      const asNum = Number(v);
+      const roundTrips = v !== "" && Number.isFinite(asNum) && String(asNum) === v;
+      entry[k] = v === "true" ? true : v === "false" ? false : (roundTrips ? asNum : v);
     }
     const res = record(entry, { file, enabled: (config.retro || {}).enabled });
     if (!res.ok) { console.error(`Retro did not record: ${res.reason}`); process.exit(1); }
