@@ -134,7 +134,7 @@ const CASES = [
       stage: "gate", tier: "max", model: "m", risk: 2.3, cost: 0.5,
       usage: { input_tokens: 984, output_tokens: 157 },
     }));
-    const rows = r.collectDecisions(d);
+    const rows = r.collectDecisions(d, "abc");
     fs.rmSync(d, { recursive: true, force: true });
     const usage = rows.find((x) => x.t === "usage");
     // Question 4 asks whether the configured shape matches reality. Taking it
@@ -144,7 +144,7 @@ const CASES = [
   ["a routing artifact with no usage block yields a decision and no usage row", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     fs.writeFileSync(path.join(d, "plan-abc.json"), JSON.stringify({ stage: "plan", tier: "deep", model: "m" }));
-    const rows = r.collectDecisions(d);
+    const rows = r.collectDecisions(d, "abc");
     fs.rmSync(d, { recursive: true, force: true });
     return [rows.length === 1, rows[0].t === "decision"];
   }],
@@ -162,6 +162,62 @@ const CASES = [
       row.head === "0055630",
       row.pr === 12, row.round === 2, row.blocked === true,
     ];
+  }],
+  // ---- the five Codex found, one fixture each -------------------------
+  ["C1 a row that could never join is refused at the door", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    const f = path.join(d, "l.jsonl");
+    const noHead = r.record({ t: "outcome", pr: 12, blocked: true }, { file: f });
+    const noPr = r.record({ t: "adjudication", label: "major" }, { file: f });
+    const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: true }, { file: f });
+    const rows = r.load(f).rows;
+    fs.rmSync(d, { recursive: true, force: true });
+    return [noHead.ok === false, /needs pr and head|needs head/.test(noHead.reason), /never be joined/.test(noHead.reason),
+            noPr.ok === false, ok.ok === true, rows.length === 1];
+  }],
+  ["C1b a hand edited ledger is an input too: an unusable row is counted, not read", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    const f = path.join(d, "l.jsonl");
+    fs.writeFileSync(f, '{"t":"outcome","pr":12,"blocked":true}\n{"t":"outcome","pr":13,"head":"abc","blocked":true}\n');
+    const l = r.load(f);
+    fs.rmSync(d, { recursive: true, force: true });
+    return [l.rows.length === 1, l.corrupt === 1];
+  }],
+  ["C2 twenty PRs at one risk value cannot be split, and are not averaged", () => {
+    const rows = [];
+    for (let i = 0; i < 20; i++) rows.push(
+      { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: 2.0 },
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false }, { t: "ship", pr: i, rounds: 2 });
+    const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
+    return [f.enough === false, f.n === 20, !/NaN/.test(f.why), /all 20 shipped PRs measured the same risk/.test(f.why)];
+  }],
+  ["C2b a real spread across the median still reports", () => {
+    const rows = [];
+    for (let i = 0; i < 20; i++) rows.push(
+      { t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m", risk: i < 10 ? 1.0 : 3.0 },
+      { t: "outcome", pr: i, head: `h${i}`, blocked: false }, { t: "ship", pr: i, rounds: i < 10 ? 1 : 3 });
+    const f = r.fit(rows, MINS).findings.find((x) => /risk index predict/.test(x.question));
+    return [f.enough === true, !/NaN/.test(f.why), f.n === 20];
+  }],
+  ["C4 a field may not overwrite the row type", () => {
+    return [r.RESERVED_KEYS.has("t"), r.ROW_SCHEMA.outcome.required.includes("head")];
+  }],
+  ["C5 collect takes only artifacts about the head being collected", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    fs.writeFileSync(path.join(d, "build-aaaaaaa.json"), JSON.stringify({ stage: "build", tier: "deep", model: "m" }));
+    fs.writeFileSync(path.join(d, "gate-bbbbbbb.json"), JSON.stringify({ stage: "gate", tier: "max", model: "m" }));
+    const mine = r.collectDecisions(d, "aaaaaaa1234");
+    const noHead = r.collectDecisions(d, null);
+    // Another PR's artifact recorded as this PR's would join to this PR's
+    // outcome and report a result about work that never happened.
+    // An empty head is the dangerous one: "".includes(x) is true for every
+    // filename, so without the guard this collects the whole directory.
+    const emptyHead = r.collectDecisions(d, "");
+    fs.rmSync(d, { recursive: true, force: true });
+    return [mine.length === 1, mine[0].stage === "build", noHead.length === 0, emptyHead.length === 0];
+  }],
+  ["every row type declares required fields, so the class cannot return renamed", () => {
+    return [...r.TYPES].map((t) => Array.isArray(r.ROW_SCHEMA[t].required) && r.ROW_SCHEMA[t].required.length > 0);
   }],
   ["the gate adapter is one function, and reads BLOCK and infra", () => {
     const b = r.adaptGateRounds({ head: "abc", round: 2, majors: 3, verdict: "BLOCK" });

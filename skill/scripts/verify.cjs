@@ -256,10 +256,17 @@ if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not poin
     // writer. Every row type it reads must have a contract that produces it,
     // or the question that row answers is unanswerable and nobody notices,
     // because the report says "not enough evidence yet" either way.
-    const contracts = read("references/stages.md") + read("references/pr-evidence.md");
+    // The message says stages.md, so the check reads stages.md. Concatenating
+    // pr-evidence.md let the producer live somewhere the message forbids,
+    // which is the same defect one level up: a rule stated but not enforced.
+    const contracts = read("references/stages.md");
     for (const type of mod.TYPES) {
       if (!new RegExp(`retro\\.cjs --record ${type}\\b`).test(contracts))
         problems.push(`retro: nothing produces a "${type}" row. A contract in stages.md must name "retro.cjs --record ${type}", or the questions it feeds can never be answered.`);
+      // A sixth row type added without required fields is this class returning
+      // under a new name, so the schema is required to keep pace with TYPES.
+      if (!mod.ROW_SCHEMA[type] || !Array.isArray(mod.ROW_SCHEMA[type].required) || !mod.ROW_SCHEMA[type].required.length)
+        problems.push(`retro: row type "${type}" declares no required fields, so an unusable row of that type can be written`);
     }
   } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
 })();

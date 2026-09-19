@@ -26,7 +26,34 @@ const fs = require("fs");
 const path = require("path");
 
 const LEDGER = ".dstack/retro/ledger.jsonl";
-const TYPES = new Set(["decision", "outcome", "usage", "adjudication", "ship"]);
+
+// What each row must carry to be usable later. This is the single source: a
+// row type without an entry here fails the verifier, so the class cannot come
+// back under a new name when someone adds a sixth type.
+//
+// The reason these are required and not merely documented: a decision joins to
+// an outcome on pr and head. An outcome written without a head keys as
+// "12:undefined", matches no decision, and takes that decision out of every
+// rate. Nothing errors. The PR simply stops existing, and the report reads as
+// though there were fewer PRs rather than as though one was lost.
+const ROW_SCHEMA = {
+  decision:     { required: ["pr", "head", "stage"] },
+  outcome:      { required: ["pr", "head"] },
+  usage:        { required: ["stage"] },
+  adjudication: { required: ["pr", "label"] },
+  ship:         { required: ["pr"] },
+};
+const TYPES = new Set(Object.keys(ROW_SCHEMA));
+
+// `t` decides how every later reader interprets the row. It is set by the
+// subcommand and may never be set by a field, or a row can lie about itself.
+const RESERVED_KEYS = new Set(["t"]);
+
+function missingFields(entry) {
+  const schema = ROW_SCHEMA[entry && entry.t];
+  if (!schema) return null;
+  return schema.required.filter((f) => entry[f] === undefined || entry[f] === null || entry[f] === "");
+}
 
 // ---------------------------------------------------------------------------
 // The ledger. Append only, one JSON object per line.
@@ -36,6 +63,8 @@ function record(entry, opts) {
   const cfg = opts || {};
   if (cfg.enabled === false) return { ok: false, reason: "retro is off" };
   if (!entry || !TYPES.has(entry.t)) return { ok: false, reason: `a ledger row needs t as one of ${[...TYPES].join(", ")}` };
+  const missing = missingFields(entry);
+  if (missing.length) return { ok: false, reason: `a ${entry.t} row needs ${missing.join(" and ")}, or it can never be joined to anything` };
   const file = cfg.file || LEDGER;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   // Append only. Never read, rewrite or truncate: history that can be edited to
@@ -56,7 +85,9 @@ function load(file) {
     if (!line.trim()) continue;
     try {
       const o = JSON.parse(line);
-      if (o && TYPES.has(o.t)) rows.push(o); else corrupt++;
+      // Also skip a row that is well formed but unusable: a hand edited ledger
+      // is an input like any other, and the same rule has to hold on the way in.
+      if (o && TYPES.has(o.t) && !missingFields(o).length) rows.push(o); else corrupt++;
     } catch { corrupt++; }
   }
   return { rows, corrupt, missing: false };
@@ -177,9 +208,24 @@ function fit(rows, config) {
     riskFinding = { question: "Does the risk index predict how many gate rounds a change takes?", enough: false, n: paired.length,
                     why: `not enough evidence yet: needs ${mins.minPairs - paired.length} more shipped PRs with a risk reading` };
   } else {
-    const mid = [...paired].sort((a, b) => a.risk - b.risk)[Math.floor(paired.length / 2)].risk;
-    const lo = paired.filter((p) => p.risk <= mid), hi = paired.filter((p) => p.risk > mid);
+    // Split by index, not by value. Splitting on `risk > median` empties the
+    // upper half whenever the median IS the upper value, which is what a
+    // bimodal set looks like: ten changes at 1.0 and ten at 3.0 is the
+    // clearest signal this question could get, and value splitting discards it.
+    const sorted = [...paired].sort((a, b) => a.risk - b.risk);
+    const half = Math.floor(sorted.length / 2);
+    const lo = sorted.slice(0, half), hi = sorted.slice(half);
+    const spreadInRisk = sorted[sorted.length - 1].risk - sorted[0].risk;
     const avg = (xs) => xs.reduce((s, p) => s + p.rounds, 0) / xs.length;
+    // The minimum was on the total, and the arithmetic runs on the two halves.
+    // A constant risk clears the total and leaves nothing to split on.
+    if (!lo.length || !hi.length || spreadInRisk === 0) {
+      riskFinding = { question: "Does the risk index predict how many gate rounds a change takes?", enough: false, n: paired.length,
+                      why: `not enough evidence yet: all ${paired.length} shipped PRs measured the same risk, so there is nothing to split on` };
+      const all2 = findings.concat([riskFinding]);
+      for (const f of all2) if (typeof f.n !== "number") throw new Error(`retro emitted a finding with no sample count: ${f.question}`);
+      return { findings: all2, shapes, rows: rows.length };
+    }
     const diff = avg(hi) - avg(lo);
     riskFinding = { question: "Does the risk index predict how many gate rounds a change takes?", enough: true, finding: diff < 0.5, n: paired.length,
                     why: diff < 0.5
@@ -197,9 +243,17 @@ function fit(rows, config) {
 // collect(): read what the process already writes.
 // ---------------------------------------------------------------------------
 
-function collectDecisions(dir) {
+// `head` is required, not optional. The routing directory accumulates
+// artifacts across PRs, and stamping all of them with the current pr and head
+// records another PR's decision as belonging to this one, where it joins to
+// this PR's outcome and reports a result about work that never happened.
+// The sha is in the filename because that is how route.cjs --out writes it.
+function collectDecisions(dir, head) {
   let names = [];
   try { names = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && !n.startsWith("state-")); } catch { return []; }
+  if (!head) return [];
+  const short = String(head).slice(0, 7);
+  names = names.filter((n) => n.includes(short) || n.includes(String(head)));
   const out = [];
   for (const n of names) {
     let d;
@@ -277,6 +331,7 @@ function main() {
       const eq = kv.indexOf("=");
       if (eq === -1 || kv.startsWith("--")) continue;
       const k = kv.slice(0, eq), v = kv.slice(eq + 1);
+      if (RESERVED_KEYS.has(k)) { console.error(`Retro will not accept "${k}" as a field: it decides how every later reader interprets the row.`); process.exit(2); }
       // Coerce only when the number round trips back to the same string.
       // "12" is a number. "0055630" is a sha: coercing it drops the leading
       // zeros, the row never joins to its decision, and that PR silently
@@ -293,9 +348,10 @@ function main() {
   }
 
   if (has("collect")) {
-    const decisions = collectDecisions(arg("routing-dir", ".dstack/routing"));
-    const pr = Number(arg("pr", 0)) || null;
     const head = arg("head", null);
+    if (!head) { console.error("Retro cannot collect without --head: the routing directory holds artifacts from other PRs, and stamping them with this one records decisions about work that never happened."); process.exit(2); }
+    const decisions = collectDecisions(arg("routing-dir", ".dstack/routing"), head);
+    const pr = Number(arg("pr", 0)) || null;
     let n = 0;
     for (const d of decisions) { if (record(Object.assign({ at: arg("at", ""), pr, head }, d), { file, enabled: (config.retro || {}).enabled }).ok) n++; }
     console.log(`Collected ${n} decision row(s) into ${file}.`);
@@ -310,4 +366,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { record, load, fit, compare, joinOutcomes, collectDecisions, adaptGateRounds, LEDGER, TYPES, DEFAULT_MINS };
+module.exports = { record, load, fit, compare, joinOutcomes, collectDecisions, adaptGateRounds, missingFields, LEDGER, TYPES, ROW_SCHEMA, RESERVED_KEYS, DEFAULT_MINS };
