@@ -175,10 +175,10 @@
       }
     },
     "models": {
-      "$comment": "Your catalog, and the only list the router may pick from. Prices are US dollars per million tokens, first party Anthropic API rates as of 2026-06-24. 'serves' is the highest work you trust that model with, and it is your call, not the router's: the router only ever picks the cheapest model you already said could do the job. Check live prices at anthropic.com/pricing before trusting a number here.",
-      "claude-opus-5": {
+      "$comment": "Prices are facts, synced from the gateway by catalog.cjs and never typed. The serves line is a claim, and it is yours. It takes a list (every stage) or an object keyed by stage, because writing code and adversarially reviewing code are different jobs. Dstack is asymmetric about where a mistake is caught: a build is checked by Prove and then Gate, a gate is checked by nothing. Spend trust accordingly.",
+      "anthropic/claude-opus-5": {
         "provider": "anthropic",
-        "runner": "claude",
+        "runner": "gateway",
         "in": 5.0,
         "out": 25.0,
         "context": 1000000,
@@ -189,9 +189,9 @@
           "max"
         ]
       },
-      "claude-sonnet-5": {
+      "anthropic/claude-sonnet-5": {
         "provider": "anthropic",
-        "runner": "claude",
+        "runner": "gateway",
         "in": 3.0,
         "out": 15.0,
         "context": 1000000,
@@ -201,18 +201,28 @@
           "deep"
         ]
       },
-      "claude-haiku-4-5": {
+      "anthropic/claude-haiku-4.5": {
         "provider": "anthropic",
-        "runner": "claude",
+        "runner": "gateway",
         "in": 1.0,
         "out": 5.0,
         "context": 200000,
-        "serves": [
-          "skim"
-        ]
+        "serves": {
+          "build": [
+            "skim"
+          ],
+          "plan": [
+            "skim"
+          ],
+          "gate": [
+            "skim"
+          ],
+          "see": []
+        },
+        "$comment": "Kept at skim everywhere so the cheapest rung always has an Anthropic option to compare a DeepSeek run against."
       },
       "codex": {
-        "provider": "openai",
+        "provider": "cli",
         "runner": "codex",
         "in": null,
         "out": null,
@@ -226,7 +236,7 @@
         "$comment": "A CLI on a subscription, so it has no per token price. An unpriced model is never chosen on cost; it wins only when you pin it or when nothing priced serves the tier."
       },
       "gemini": {
-        "provider": "google",
+        "provider": "cli",
         "runner": "gemini",
         "in": null,
         "out": null,
@@ -238,7 +248,7 @@
         ]
       },
       "grok": {
-        "provider": "xai",
+        "provider": "cli",
         "runner": "grok",
         "in": null,
         "out": null,
@@ -248,6 +258,46 @@
           "standard",
           "deep"
         ]
+      },
+      "deepseek/deepseek-v4-flash": {
+        "provider": "deepseek",
+        "runner": "gateway",
+        "in": null,
+        "out": null,
+        "context": null,
+        "serves": {
+          "build": [
+            "skim",
+            "standard"
+          ],
+          "plan": [
+            "skim"
+          ],
+          "gate": [],
+          "see": []
+        },
+        "$comment": "Trusted to write, not to judge. Build is generous because a build passes through Prove and then Gate before it can ship, so a weak builder is caught twice. Gate is empty because a gate passes through nothing: it is the last line, and a weak reviewer there is a miss nobody catches."
+      },
+      "deepseek/deepseek-v4-pro": {
+        "provider": "deepseek",
+        "runner": "gateway",
+        "in": null,
+        "out": null,
+        "context": null,
+        "serves": {
+          "build": [
+            "skim",
+            "standard",
+            "deep"
+          ],
+          "plan": [
+            "skim",
+            "standard"
+          ],
+          "gate": [],
+          "see": []
+        },
+        "$comment": "Same argument, one rung further up on the generation side. Still nothing at Gate until Retro has outcome data saying a cheaper reviewer holds up."
       }
     },
     "provider": "vercel",

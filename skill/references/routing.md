@@ -64,6 +64,16 @@ A tier is a class of work, not a model. Which model serves a tier is the catalog
 
 That `serves` line is a statement about what you trust a model with, and the router never writes it or second guesses it. All the router does is pick the cheapest model you already said could do the job. That is the whole reason this can lower a bill without lowering a standard: it is choosing inside a set you drew.
 
+**Price is a fact. Capability is a claim.** The prices come from the gateway, synced by `catalog.cjs`, and are never typed by hand: a hand typed price is stale the day a provider changes it, and nothing would notice, because the router would go on ranking confidently against a number that used to be true. `serves` is the opposite: it is the one line a machine must not write, and sync never touches it. A model added to the catalog arrives with `serves: []`, which is inert. It sits there, priced and visible and unpickable, until a person says what it is for.
+
+**serves can differ per stage,** because writing code and adversarially reviewing code are different jobs and a model can be strong at one and weak at the other:
+
+    "serves": { "build": ["skim", "standard", "deep"], "plan": ["skim"], "gate": [] }
+
+The reason to reach for that form is an asymmetry already built into this process. A build passes through Prove, which mutates every guarantee out, and then through Gate, which reviews it adversarially. A weak builder gets caught twice. A gate passes through nothing: it is the last line, and a review that missed something is a miss nobody else is looking for. Trust on the generation side is recoverable. Trust on the judgment side is not. Spend it accordingly.
+
+A stage the object does not name falls back to `default` if there is one, and to nothing if there is not. An explicit empty list beats a default, because an empty list is a deliberate "not here".
+
 **Cheapest is per stage, because the shape of the work decides it.** A gate reads eighty thousand tokens and writes six thousand. A build writes twenty thousand. A model with cheap input and dear output wins one of those and loses the other, so each stage declares its shape in `typical` and the estimate uses it. A wrong shape changes the ranking; it never changes the tier.
 
 Run `node scripts/route.cjs --explain` to see the whole comparison: every model, every tier a stage can reach, what each would cost, and which one wins.

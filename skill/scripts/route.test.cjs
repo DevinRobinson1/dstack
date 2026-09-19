@@ -9,7 +9,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { decide, selectModel, estimateCost } = require("./route.cjs");
+const { decide, selectModel, servesTier, estimateCost } = require("./route.cjs");
 const jev = require("./jev.cjs");
 
 const ROUTING = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "dstack.config.example.json"), "utf8")).routing;
@@ -214,6 +214,43 @@ const MODEL_CASES = [
     return [estimateCost({ in: null, out: null }, { in: 1, out: 1 }) === null,
             estimateCost({ in: 1, out: 1 }, null) === null,
             estimateCost({ in: 1000, out: 0 }, { in: 1000, out: 1000 }) === 1];
+  }],
+  ["serves can differ per stage, because writing and judging are different jobs", () => {
+    const writer = { runner: "w", in: 0.1, out: 0.2, serves: { build: ["skim", "standard", "deep"], plan: ["skim"], gate: [] } };
+    const models = Object.assign({}, CATALOG, { writer });
+    const onBuild = selectModel("deep", { name: "build", typical: { in: 60000, out: 20000 } }, R({ models }));
+    const onGate = selectModel("deep", { name: "gate", typical: { in: 80000, out: 6000 } }, R({ models }));
+    return [
+      onBuild.model === "writer",
+      onGate.model !== "writer",
+      onGate.alternatives.every((a) => a.id !== "writer"),
+      servesTier(writer, "deep", "build") === true,
+      // Gate is the last line. A model trusted to write is not thereby
+      // trusted to judge, and an empty list at a stage means exactly that.
+      servesTier(writer, "deep", "gate") === false,
+    ];
+  }],
+  ["a stage the serves object does not name falls to default, or to nothing", () => {
+    const withDefault = { serves: { build: ["deep"], default: ["skim"] } };
+    const without = { serves: { build: ["deep"] } };
+    return [
+      servesTier(withDefault, "skim", "plan") === true,
+      servesTier(withDefault, "deep", "plan") === false,
+      servesTier(without, "skim", "plan") === false,
+      servesTier(without, "deep", "build") === true,
+      // An explicit empty list beats a default: it is a deliberate "not here".
+      servesTier({ serves: { gate: [], default: ["max"] } }, "max", "gate") === false,
+    ];
+  }],
+  ["the array form still means every stage", () => {
+    const m = { serves: ["skim", "deep"] };
+    return [servesTier(m, "deep", "build") === true, servesTier(m, "deep", "gate") === true,
+            servesTier(m, "max", "gate") === false, servesTier({ serves: null }, "skim", "build") === false];
+  }],
+  ["an inert model is in the catalog and unpickable", () => {
+    const models = Object.assign({}, CATALOG, { inert: { runner: "i", in: 0.01, out: 0.01, serves: [] } });
+    const r = selectModel("skim", { name: "build", typical: { in: 1000, out: 1000 } }, R({ models }));
+    return [r.model !== "inert", r.alternatives.every((a) => a.id !== "inert")];
   }],
   ["a routed decision carries the model, its cost, and the runners up", () => {
     const full = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "..", "dstack.config.example.json"), "utf8")).routing;

@@ -236,6 +236,29 @@ function decide(stage, answers, routing) {
 // wins one and loses the other, so the estimate uses the stage's own shape.
 // ---------------------------------------------------------------------------
 
+// `serves` answers "what is this model trusted with", and the honest answer is
+// often "depends what you are asking it to do". Writing code and adversarially
+// reviewing code are different jobs, and a model can be strong at one and weak
+// at the other. So serves takes either shape:
+//
+//   serves: ["skim", "standard"]                        the same everywhere
+//   serves: { build: ["skim","deep"], gate: ["skim"] }   per stage
+//
+// The per stage form exists because Dstack is asymmetric about where mistakes
+// get caught. A build passes through Prove and then Gate before it can ship, so
+// a weak builder is caught by two later stages. A gate passes through nothing:
+// it is the last line. Trust on the generation side is recoverable. Trust on
+// the judgment side is not.
+function servesTier(model, tier, stage) {
+  const s = model.serves;
+  if (Array.isArray(s)) return s.includes(tier);
+  if (s && typeof s === "object") {
+    const forStage = s[stage] !== undefined ? s[stage] : s.default;
+    return Array.isArray(forStage) ? forStage.includes(tier) : false;
+  }
+  return false;
+}
+
 function estimateCost(model, typical) {
   if (!model || model.in == null || model.out == null || !typical) return null;
   const cost = ((typical.in || 0) * model.in + (typical.out || 0) * model.out) / 1e6;
@@ -246,7 +269,7 @@ function selectModel(tier, rule, routing) {
   const catalog = routing.models || {};
   const typical = (rule && rule.typical) || null;
   const rows = Object.entries(catalog)
-    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && Array.isArray(m.serves) && m.serves.includes(tier))
+    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && servesTier(m, tier, rule && rule.name))
     .map(([id, m]) => ({ id, runner: m.runner || id, provider: m.provider || null, cost: estimateCost(m, typical), in: m.in, out: m.out, context: m.context }));
 
   if (!rows.length) return { model: null, runner: null, cost: null, why: `no model in the catalog serves ${tier}`, alternatives: [] };
@@ -334,10 +357,19 @@ function explain(config) {
   const order = routing.ladderOrder || [];
   console.log("Model catalog. Prices are dollars per million tokens, from your config.\n");
   const rows = Object.entries(routing.models || {}).filter(([id]) => !id.startsWith("$"));
-  console.log("  " + "model".padEnd(18) + "in".padStart(7) + "out".padStart(8) + "  serves");
+  console.log("  " + "model".padEnd(30) + "in".padStart(7) + "out".padStart(8) + "  trusted with");
+  const servesLabel = (m) => {
+    if (m.disabled) return "disabled, out of the catalog";
+    if (Array.isArray(m.serves)) return m.serves.length ? m.serves.join(", ") : "nothing yet (inert)";
+    if (m.serves && typeof m.serves === "object") {
+      const parts = Object.entries(m.serves).filter(([, v]) => Array.isArray(v) && v.length).map(([k, v]) => `${k}: ${v.join("/")}`);
+      return parts.length ? parts.join("  ") : "nothing yet (inert)";
+    }
+    return "nothing yet (inert)";
+  };
   for (const [id, m] of rows) {
-    const serves = m.disabled ? "disabled, out of the catalog" : (m.serves || []).join(", ");
-    console.log("  " + id.padEnd(18) + (m.in == null ? "n/a" : m.in.toFixed(2)).padStart(7) + (m.out == null ? "n/a" : m.out.toFixed(2)).padStart(8) + "  " + serves);
+    const serves = servesLabel(m);
+    console.log("  " + id.padEnd(30) + (m.in == null ? "n/a" : m.in.toFixed(2)).padStart(7) + (m.out == null ? "n/a" : m.out.toFixed(2)).padStart(8) + "  " + serves);
   }
 
   for (const [stage, rule] of Object.entries(routing.stages || {})) {
@@ -349,7 +381,7 @@ function explain(config) {
       const pick = selectModel(tier, Object.assign({ name: stage }, rule), routing);
       const alts = pick.alternatives.map((a) => `${a.id} ${a.cost == null ? "n/a" : "$" + a.cost.toFixed(2)}`).join(", ");
       const note = pick.pinned ? "pinned, ranking skipped" : pick.cost == null ? "unpriced" : "$" + pick.cost.toFixed(2) + " a run";
-      console.log(`    ${tier.padEnd(9)} -> ${String(pick.model).padEnd(17)} ${note}`);
+      console.log(`    ${tier.padEnd(9)} -> ${String(pick.model).padEnd(30)} ${note}`);
       console.log(`    ${"".padEnd(9)}    ${pick.pinned ? "would have ranked" : "ranked"}: ${alts}`);
     }
   }
@@ -383,4 +415,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { decide, measure, route, selectModel, estimateCost, riskIndex, bandFor, decidingConfidence, QUESTION_SETS, RISK_QUESTIONS, VISIBILITY_QUESTION };
+module.exports = { decide, measure, route, selectModel, servesTier, estimateCost, riskIndex, bandFor, decidingConfidence, QUESTION_SETS, RISK_QUESTIONS, VISIBILITY_QUESTION };

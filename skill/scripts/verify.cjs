@@ -164,10 +164,21 @@ if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not poin
   if (!models.length) problems.push("routing: the models catalog is empty, so no stage can pick a model");
   const served = new Set();
   for (const [id, m] of models) {
-    if (!Array.isArray(m.serves) || !m.serves.length) { problems.push(`routing: model ${id} serves nothing`); continue; }
-    for (const tier of m.serves) {
-      if (!order.includes(tier)) problems.push(`routing: model ${id} serves "${tier}", not a tier in the ladder`);
-      else if (!m.disabled) served.add(tier);
+    // An empty serves list is legal and means inert: in the catalog, trusted
+    // with nothing, unpickable until a person writes that line. That is the
+    // state a newly added model must arrive in.
+    // serves is an array (every stage) or an object keyed by stage.
+    let lists;
+    if (Array.isArray(m.serves)) lists = { "*": m.serves };
+    else if (m.serves && typeof m.serves === "object") lists = m.serves;
+    else { problems.push(`routing: model ${id} has no serves list`); continue; }
+    for (const [stage, tiers] of Object.entries(lists)) {
+      if (!Array.isArray(tiers)) { problems.push(`routing: model ${id} serves.${stage} is not a list of tiers`); continue; }
+      if (stage !== "*" && stage !== "default" && !(r.stages || {})[stage]) problems.push(`routing: model ${id} names serves.${stage}, which is not a stage`);
+      for (const tier of tiers) {
+        if (!order.includes(tier)) problems.push(`routing: model ${id} serves "${tier}", not a tier in the ladder`);
+        else if (!m.disabled) served.add(tier);
+      }
     }
     for (const key of ["in", "out"]) {
       if (m[key] != null && typeof m[key] !== "number") problems.push(`routing: model ${id}.${key} is ${typeof m[key]}, must be a number or null`);
@@ -179,7 +190,7 @@ if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not poin
   for (const [stage, rule] of Object.entries(r.stages || {})) {
     if (rule.kind === "binary") continue;
     if (rule.pin && !r.models[rule.pin]) problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which the catalog does not define`);
-    if (rule.pin && r.models[rule.pin] && !(r.models[rule.pin].serves || []).includes(rule.floor))
+    if (rule.pin && r.models[rule.pin] && !require("./route.cjs").servesTier(r.models[rule.pin], rule.floor, stage))
       problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which does not serve that stage's floor "${rule.floor}"`);
     if (!rule.typical) { problems.push(`routing: stage ${stage} has no typical shape, so models cannot be ranked on cost`); continue; }
     for (const key of ["in", "out"]) {
