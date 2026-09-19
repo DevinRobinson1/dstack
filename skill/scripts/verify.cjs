@@ -17,7 +17,7 @@ const ROUTES = [
 const STAGES = ROUTES.map((r) => r[2]);
 const HEADINGS = ROUTES.map((r) => `## ${r[0]}. ${r[1]}`);
 const FIELDS = ["**Who:**", "**Needs:**", "**Produces:**", "**Owner reads:**", "**Stop:**"];
-const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md"];
+const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md", "references/triage.md"];
 
 for (const f of files) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`${f}: missing`);
@@ -41,7 +41,11 @@ if (desc.length >= 300) problems.push(`SKILL.md: description is ${desc.length} c
 if (!/^[A-Z][a-z]+ /.test(desc)) problems.push("SKILL.md: description must start with an action verb");
 if (!/Use when/.test(desc)) problems.push("SKILL.md: description needs a Use when clause");
 const words = skill.split(/\s+/).filter(Boolean).length;
-if (words > 1700) problems.push(`SKILL.md: ${words} words, limit 1700`);
+// 1700 held for nine stages with no routing. Routing and triage added two
+// capabilities and two canonical stop rules (S7 and S8 are ~120 words that must
+// appear here verbatim). Raised once, deliberately, not shaved to fit.
+const WORD_LIMIT = 1900;
+if (words > WORD_LIMIT) problems.push(`SKILL.md: ${words} words, limit ${WORD_LIMIT}`);
 
 // Routing table: each row is checked as its (number, name, command) tuple, in order.
 const rows = skill.split("\n").filter((l) => /^\|\s*\d+\s*\|/.test(l));
@@ -82,7 +86,7 @@ const block = (text, name) => {
 const a = block(skill, "SKILL.md"), b = block(contract, "stages.md");
 if (a !== null && b !== null && a !== b) problems.push("stop-rule block differs between SKILL.md and stages.md");
 if (a) {
-  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
+  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
   if (!/autoMergeOnPass/.test(a)) problems.push("stop rules: S6 must name autoMergeOnPass");
   if (!/BOTH/.test(a)) problems.push("stop rules: S1 must require BOTH the Codex verdict and the owner's yes");
 }
@@ -147,6 +151,35 @@ if (!/`stale`/.test(skill)) problems.push("SKILL.md: state vocabulary must inclu
     if (!order.includes(tier)) problems.push(`routing: surfaceFloors.${surface} is "${tier}", not a tier in the ladder`);
   }
 
+  // The catalog. A tier no model serves is a stage that can route nowhere, and
+  // a price that is a string ranks as unpriced without anyone noticing.
+  const models = Object.entries(r.models || {}).filter(([id]) => !id.startsWith("$"));
+  if (!models.length) problems.push("routing: the models catalog is empty, so no stage can pick a model");
+  const served = new Set();
+  for (const [id, m] of models) {
+    if (!Array.isArray(m.serves) || !m.serves.length) { problems.push(`routing: model ${id} serves nothing`); continue; }
+    for (const tier of m.serves) {
+      if (!order.includes(tier)) problems.push(`routing: model ${id} serves "${tier}", not a tier in the ladder`);
+      else if (!m.disabled) served.add(tier);
+    }
+    for (const key of ["in", "out"]) {
+      if (m[key] != null && typeof m[key] !== "number") problems.push(`routing: model ${id}.${key} is ${typeof m[key]}, must be a number or null`);
+    }
+    if ((m.in == null) !== (m.out == null)) problems.push(`routing: model ${id} prices only one side, which cannot be estimated; set both or neither`);
+  }
+  for (const tier of order) if (!served.has(tier)) problems.push(`routing: no enabled model serves tier "${tier}"`);
+
+  for (const [stage, rule] of Object.entries(r.stages || {})) {
+    if (rule.kind === "binary") continue;
+    if (rule.pin && !r.models[rule.pin]) problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which the catalog does not define`);
+    if (rule.pin && r.models[rule.pin] && !(r.models[rule.pin].serves || []).includes(rule.floor))
+      problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which does not serve that stage's floor "${rule.floor}"`);
+    if (!rule.typical) { problems.push(`routing: stage ${stage} has no typical shape, so models cannot be ranked on cost`); continue; }
+    for (const key of ["in", "out"]) {
+      if (typeof rule.typical[key] !== "number") problems.push(`routing: stage ${stage}.typical.${key} is not a number`);
+    }
+  }
+
   let prev = -Infinity;
   for (const b of r.bands || []) {
     if (!order.includes(b.tier)) problems.push(`routing: a band names tier "${b.tier}", not in the ladder`);
@@ -173,6 +206,41 @@ if (!/`stale`/.test(skill)) problems.push("SKILL.md: state vocabulary must inclu
 
 // The skill must tell the reader where the routing contract lives.
 if (!/references\/routing\.md/.test(skill)) problems.push("SKILL.md: does not point at references/routing.md");
+if (!/references\/triage\.md/.test(skill)) problems.push("SKILL.md: does not point at references/triage.md");
+
+// Triage: thresholds must be numbers in range, and the invariant has to be
+// stated where a reader of the contract will hit it.
+(function triage() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
+  const t = cfg.triage;
+  if (!t) { problems.push("dstack.config.example.json: no triage block"); return; }
+  const ranges = [
+    ["infra.treatAsInfraAtOrAbove", t.infra && t.infra.treatAsInfraAtOrAbove],
+    ["findings.inScopeAtOrAbove", t.findings && t.findings.inScopeAtOrAbove],
+    ["findings.guardedAtOrAbove", t.findings && t.findings.guardedAtOrAbove],
+    ["progress.sameIdeaAtOrAbove", t.progress && t.progress.sameIdeaAtOrAbove],
+    ["classHits.rankAtOrAbove", t.classHits && t.classHits.rankAtOrAbove],
+    ["plan.requireAtOrAbove", t.plan && t.plan.requireAtOrAbove],
+  ];
+  for (const [name, v] of ranges) {
+    if (typeof v !== "number") problems.push(`triage: ${name} is not a number`);
+    else if (v < 0 || v > 1) problems.push(`triage: ${name} is ${v}, must be a probability between 0 and 1`);
+  }
+  for (const [name, v] of [["findings.maxFindings", t.findings && t.findings.maxFindings], ["classHits.maxHits", t.classHits && t.classHits.maxHits]]) {
+    if (!Number.isInteger(v) || v < 1) problems.push(`triage: ${name} must be a positive integer cap`);
+  }
+  const contract = read("references/triage.md");
+  if (!/may only ever add work or add caution/.test(contract)) problems.push("triage.md: does not state the invariant");
+  try {
+    const mod = require("./triage.cjs");
+    const verdicts = new Set();
+    for (const v of [0.05, 0.5, 0.95]) verdicts.add(mod.judgePlan(Object.fromEntries(Object.keys(mod.PLAN_QUESTIONS).map((k) => [k, { type: "noul", noul: v }])), {}).verdict);
+    for (const bad of ["ready", "approved", "pass"]) if (verdicts.has(bad)) problems.push(`triage: judgePlan can return "${bad}", which would let a reading approve a plan`);
+  } catch (e) { problems.push(`triage.cjs: does not load (${e.message})`); }
+})();
 
 function report() {
   if (problems.length) {
@@ -180,7 +248,7 @@ function report() {
     for (const p of problems) console.error("  - " + p);
     process.exit(1);
   }
-  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical, routing policy resolves`);
+  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical, routing and triage policy resolve`);
   process.exit(0);
 }
 report();

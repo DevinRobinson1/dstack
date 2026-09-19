@@ -38,6 +38,24 @@ No model name, no effort level, and no price appears in a question. The question
 
 There are deliberately **no surface ceilings**. A documentation change that measures as high risk is a misclassification, and capping it would be exactly the silent downgrade this process exists to remove.
 
+## Choosing the model, and what cheapest means
+
+A tier is a class of work, not a model. Which model serves a tier is the catalog's job, and the catalog is yours:
+
+    "claude-sonnet-5": { "in": 3.00, "out": 15.00, "serves": ["skim", "standard", "deep"] }
+
+That `serves` line is a statement about what you trust a model with, and the router never writes it or second guesses it. All the router does is pick the cheapest model you already said could do the job. That is the whole reason this can lower a bill without lowering a standard: it is choosing inside a set you drew.
+
+**Cheapest is per stage, because the shape of the work decides it.** A gate reads eighty thousand tokens and writes six thousand. A build writes twenty thousand. A model with cheap input and dear output wins one of those and loses the other, so each stage declares its shape in `typical` and the estimate uses it. A wrong shape changes the ranking; it never changes the tier.
+
+Run `node scripts/route.cjs --explain` to see the whole comparison: every model, every tier a stage can reach, what each would cost, and which one wins.
+
+Three rules on the catalog:
+
+- **An unpriced model never outranks a priced one.** A subscription CLI has no per token price and cannot be compared on cost, so it wins a tier only when pinned or when nothing priced serves that tier.
+- **A pin skips the ranking but not the catalog.** Pinning a stage to a model that the catalog does not say serves that stage's floor is a config error the verifier rejects, not a silent fallback.
+- **A disabled model leaves the catalog entirely** rather than being chosen and then failing at the point of use.
+
 ## The four things routing may never do
 
 1. **It may never turn a gate into a pass.** Routing sets what a review costs. It has no opinion on the verdict, and a router that is down cannot produce one.
@@ -82,7 +100,9 @@ Retro is where they get fixed. Once it exists, the question is whether tiers cor
 
 ## Named follow on work
 
-Routing is the first use and the smallest. Each of these is its own plan.
+Routing was the first use and the smallest. The first five below are built, in `references/triage.md` and `scripts/triage.cjs`, under stop rule S8. The last three wait on stages that do not exist yet.
+
+**Built:**
 
 1. **Infrastructure verdicts (S4).** A gate round that died on a network timeout currently costs a full round at the top rung before anyone notices. A noul over the runner's own output separates "the reviewer failed" from "the reviewer found nothing", in a fraction of a second, before the retry is spent.
 
@@ -93,6 +113,8 @@ Routing is the first use and the smallest. Each of these is its own plan.
 4. **The class rule, question two.** "Where else does that class run" is a grep whose hits a person reads. A noul per hit, asking whether that site has the same shape as the finding, turns a manual read of a hundred hits into a ranked list. This is the workload the price per million was built for.
 
 5. **Plan quality before the reviewer is paid.** A plan whose Claim is not observable, whose Acceptance cannot be checked without reading code, or whose Class section names no paths will waste a full adversarial review. Three nouls over the plan's own text reject it locally first.
+
+**Not built, because the stage is not built:**
 
 6. **Judging the judge at See it.** The screenshot judge returns a paragraph. A noul over that paragraph, asking whether it actually states the flow succeeded, and a second asking whether it hedged, catches the judge that wrote three sentences of description and never answered the question.
 

@@ -9,7 +9,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { decide } = require("./route.cjs");
+const { decide, selectModel, estimateCost } = require("./route.cjs");
 const jev = require("./jev.cjs");
 
 const ROUTING = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "dstack.config.example.json"), "utf8")).routing;
@@ -159,6 +159,69 @@ const CASES = [
   },
 ];
 
+// Choosing the model. The catalog's serves list is the owner's statement of
+// what a model can do; these prove the router only ever picks from inside it.
+const CATALOG = {
+  cheap_out: { runner: "a", in: 10.0, out: 1.0, serves: ["skim", "standard", "deep"] },
+  cheap_in:  { runner: "b", in: 1.0, out: 10.0, serves: ["skim", "standard", "deep"] },
+  only_top:  { runner: "c", in: 4.0, out: 4.0, serves: ["max"] },
+  unpriced:  { runner: "d", in: null, out: null, serves: ["skim", "standard", "deep", "max"] },
+  $comment:  "ignored",
+};
+const R = (over) => Object.assign({ ladderOrder: ["skim", "standard", "deep", "max"], models: CATALOG }, over || {});
+
+const MODEL_CASES = [
+  ["the cheapest priced model that serves the tier wins", () => {
+    const r = selectModel("deep", { name: "gate", typical: { in: 80000, out: 6000 } }, R());
+    return [r.model === "cheap_in", r.cost === Number(((80000 * 1 + 6000 * 10) / 1e6).toFixed(4)), /cheapest of 2/.test(r.why)];
+  }],
+  ["cheapest is per stage, because the shape of the work decides it", () => {
+    const readHeavy = selectModel("deep", { typical: { in: 100000, out: 1000 } }, R());
+    const writeHeavy = selectModel("deep", { typical: { in: 1000, out: 100000 } }, R());
+    return [readHeavy.model === "cheap_in", writeHeavy.model === "cheap_out", readHeavy.model !== writeHeavy.model];
+  }],
+  ["an unpriced model never outranks a priced one", () => {
+    const r = selectModel("standard", { typical: { in: 1000, out: 1000 } }, R());
+    return [r.model !== "unpriced", r.alternatives[r.alternatives.length - 1].id === "unpriced"];
+  }],
+  ["an unpriced model is chosen only when nothing priced serves the tier", () => {
+    const only = { unpriced: CATALOG.unpriced, $comment: "x" };
+    const r = selectModel("max", { typical: { in: 1000, out: 1000 } }, R({ models: only }));
+    return [r.model === "unpriced", r.cost === null, /cannot be ranked on cost/.test(r.why)];
+  }],
+  ["a model the catalog does not say serves the tier is never picked", () => {
+    const r = selectModel("max", { typical: { in: 1000, out: 1000 } }, R());
+    return [r.model !== "cheap_in", r.model !== "cheap_out", r.alternatives.every((a) => CATALOG[a.id].serves.includes("max"))];
+  }],
+  ["a tier nothing serves returns nothing, and says so", () => {
+    const r = selectModel("max", { typical: { in: 1000, out: 1000 } }, R({ models: { cheap_in: CATALOG.cheap_in } }));
+    return [r.model === null, /no model in the catalog serves max/.test(r.why)];
+  }],
+  ["a pin to a model that cannot serve the tier fails loudly, never silently", () => {
+    const r = selectModel("max", { name: "gate", pin: "cheap_in", typical: { in: 1000, out: 1000 } }, R());
+    return [r.model === null, r.pinFailed === true, /does not list as serving max/.test(r.why)];
+  }],
+  ["a valid pin skips the ranking", () => {
+    const r = selectModel("deep", { pin: "cheap_out", typical: { in: 100000, out: 1000 } }, R());
+    return [r.model === "cheap_out", r.pinned === true, /pinned to cheap_out/.test(r.why)];
+  }],
+  ["a disabled model leaves the catalog", () => {
+    const models = Object.assign({}, CATALOG, { cheap_in: Object.assign({}, CATALOG.cheap_in, { disabled: true }) });
+    const r = selectModel("deep", { typical: { in: 100000, out: 1000 } }, R({ models }));
+    return [r.model === "cheap_out", r.alternatives.every((a) => a.id !== "cheap_in")];
+  }],
+  ["an unpriced model has no estimate rather than a zero one", () => {
+    return [estimateCost({ in: null, out: null }, { in: 1, out: 1 }) === null,
+            estimateCost({ in: 1, out: 1 }, null) === null,
+            estimateCost({ in: 1000, out: 0 }, { in: 1000, out: 1000 }) === 1];
+  }],
+  ["a routed decision carries the model, its cost, and the runners up", () => {
+    const full = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "..", "dstack.config.example.json"), "utf8")).routing;
+    const d = decide("gate", null, full);
+    return [typeof d.model === "string", d.cost === null || typeof d.cost === "number", Array.isArray(d.alternatives), d.alternatives.length > 0, typeof d.model_why === "string"];
+  }],
+];
+
 // What leaves the machine. These guard the client, not the policy: a caller
 // that builds its file list off a stale branch base would otherwise hand over
 // a hundred thousand tokens without anyone noticing.
@@ -201,7 +264,7 @@ for (const c of CASES) {
 }
 
 (async () => {
-for (const [name, fn] of CLIENT_CASES) {
+for (const [name, fn] of MODEL_CASES.concat(CLIENT_CASES)) {
   let checks;
   try { checks = await fn(); }
   catch (e) { failures.push(`${name}\n      threw: ${e.message}`); continue; }
@@ -209,7 +272,7 @@ for (const [name, fn] of CLIENT_CASES) {
   else failures.push(`${name}\n      check ${checks.findIndex((c) => !c) + 1} of ${checks.length} failed`);
 }
 
-const total = CASES.length + CLIENT_CASES.length;
+const total = CASES.length + MODEL_CASES.length + CLIENT_CASES.length;
 if (failures.length) {
   console.error(`Dstack routing fixtures FAILED: ${failures.length} of ${total}`);
   for (const f of failures) console.error("  - " + f);

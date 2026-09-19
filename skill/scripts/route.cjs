@@ -164,8 +164,11 @@ function decide(stage, answers, routing) {
 
   // A router failure is not a cheap answer. It is the stage default.
   if (!answers || !Object.keys(readings).length) {
+    const pick = selectModel(rule.default, Object.assign({ name: stage }, rule), routing);
     return {
       stage, kind: "ladder", tier: rule.default, routed: false, applies: true,
+      model: pick.model, runner: pick.runner, cost: pick.cost, model_why: pick.why, alternatives: pick.alternatives,
+      effort: ((routing.tiers || {})[rule.default] || {}).effort || null,
       why: `the router did not answer, so this stage runs at its default, ${rule.default}`,
       confidence: null, risk: null, parts: [], floorApplied: null, escalated: false, answers: null,
     };
@@ -207,15 +210,73 @@ function decide(stage, answers, routing) {
   const top = parts[0];
   const why = buildWhy({ tier, measured, floorApplied, escalated, worst, top, risk, surfaceName, rule, order });
   const spend = (routing.tiers || {})[tier] || null;
+  const pick = selectModel(tier, Object.assign({ name: stage }, rule), routing);
 
   return {
-    stage, kind: "ladder", tier, runner: spend ? spend.runner : null, effort: spend ? spend.effort : null,
+    stage, kind: "ladder", tier,
+    model: pick.model, runner: pick.runner || (spend ? spend.runner : null), effort: spend ? spend.effort : null,
+    cost: pick.cost, model_why: pick.why, alternatives: pick.alternatives,
     routed: true, applies: true, why, risk, parts, measured, floorApplied, escalated,
     confidence: worst ? Number(worst.confidence.toFixed(3)) : null, surface: surfaceName,
     skippable: rule.skipAtOrBelow ? tierIndex(order, tier) <= tierIndex(order, rule.skipAtOrBelow) : false,
     answers,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Choosing the model. Pure, like decide(): catalog and tier in, one row out.
+//
+// The router never decides what a model is capable of. The catalog says which
+// tiers each model serves, and that line is the owner's to write. All the
+// router does is pick the cheapest model the owner already said could do the
+// job, which is why this can lower a bill and cannot lower a standard.
+//
+// Cheapest is per stage, not global. A gate reads eighty thousand tokens and
+// writes six; a build writes twenty. A model with cheap input and dear output
+// wins one and loses the other, so the estimate uses the stage's own shape.
+// ---------------------------------------------------------------------------
+
+function estimateCost(model, typical) {
+  if (!model || model.in == null || model.out == null || !typical) return null;
+  const cost = ((typical.in || 0) * model.in + (typical.out || 0) * model.out) / 1e6;
+  return Number(cost.toFixed(4));
+}
+
+function selectModel(tier, rule, routing) {
+  const catalog = routing.models || {};
+  const typical = (rule && rule.typical) || null;
+  const rows = Object.entries(catalog)
+    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && Array.isArray(m.serves) && m.serves.includes(tier))
+    .map(([id, m]) => ({ id, runner: m.runner || id, provider: m.provider || null, cost: estimateCost(m, typical), in: m.in, out: m.out, context: m.context }));
+
+  if (!rows.length) return { model: null, runner: null, cost: null, why: `no model in the catalog serves ${tier}`, alternatives: [] };
+
+  // A pin skips ranking, but only to a model the owner said serves this tier.
+  const pinned = rule && rule.pin ? rows.find((r) => r.id === rule.pin) : null;
+  if (rule && rule.pin && !pinned) {
+    return { model: null, runner: null, cost: null, why: `${stageSafe(rule)} is pinned to ${rule.pin}, which the catalog does not list as serving ${tier}`, alternatives: rows, pinFailed: true };
+  }
+
+  const priced = rows.filter((r) => r.cost != null).sort((a, b) => a.cost - b.cost);
+  const unpriced = rows.filter((r) => r.cost == null);
+  const alternatives = priced.concat(unpriced);
+
+  if (pinned) return { model: pinned.id, runner: pinned.runner, cost: pinned.cost, why: `pinned to ${pinned.id}`, alternatives, pinned: true };
+
+  if (!priced.length) {
+    const first = unpriced[0];
+    return { model: first.id, runner: first.runner, cost: null, why: `${first.id} serves ${tier} and carries no per token price, so it cannot be ranked on cost`, alternatives };
+  }
+
+  const best = priced[0];
+  const next = priced[1];
+  const why = next
+    ? `cheapest of ${priced.length} that serve ${tier}: about $${best.cost.toFixed(2)} a run against $${next.cost.toFixed(2)} for ${next.id}`
+    : `the only priced model that serves ${tier}, about $${best.cost.toFixed(2)} a run`;
+  return { model: best.id, runner: best.runner, cost: best.cost, why, alternatives };
+}
+
+function stageSafe(rule) { return (rule && rule.name) || "this stage"; }
 
 function offDecision(stage, rule, reason) {
   return { stage, kind: "off", tier: rule ? rule.default : null, routed: false, applies: true, why: reason, confidence: null, risk: null, parts: [], answers: null };
@@ -267,13 +328,44 @@ function arg(name, fallback) {
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
+function explain(config) {
+  const routing = (config && config.routing) || {};
+  const order = routing.ladderOrder || [];
+  console.log("Model catalog. Prices are dollars per million tokens, from your config.\n");
+  const rows = Object.entries(routing.models || {}).filter(([id]) => !id.startsWith("$"));
+  console.log("  " + "model".padEnd(18) + "in".padStart(7) + "out".padStart(8) + "  serves");
+  for (const [id, m] of rows) {
+    const serves = m.disabled ? "disabled, out of the catalog" : (m.serves || []).join(", ");
+    console.log("  " + id.padEnd(18) + (m.in == null ? "n/a" : m.in.toFixed(2)).padStart(7) + (m.out == null ? "n/a" : m.out.toFixed(2)).padStart(8) + "  " + serves);
+  }
+
+  for (const [stage, rule] of Object.entries(routing.stages || {})) {
+    if (rule.kind === "binary") continue;
+    const t = rule.typical;
+    console.log(`\n  ${stage}: reads about ${t ? t.in.toLocaleString() : "?"} tokens, writes about ${t ? t.out.toLocaleString() : "?"}`);
+    for (const tier of order) {
+      if (order.indexOf(tier) < order.indexOf(rule.floor) || order.indexOf(tier) > order.indexOf(rule.ceiling)) continue;
+      const pick = selectModel(tier, Object.assign({ name: stage }, rule), routing);
+      const alts = pick.alternatives.map((a) => `${a.id} ${a.cost == null ? "n/a" : "$" + a.cost.toFixed(2)}`).join(", ");
+      const note = pick.pinned ? "pinned, ranking skipped" : pick.cost == null ? "unpriced" : "$" + pick.cost.toFixed(2) + " a run";
+      console.log(`    ${tier.padEnd(9)} -> ${String(pick.model).padEnd(17)} ${note}`);
+      console.log(`    ${"".padEnd(9)}    ${pick.pinned ? "would have ranked" : "ranked"}: ${alts}`);
+    }
+  }
+  console.log("\n  The catalog's serves list is yours to write. The router only ever picks the");
+  console.log("  cheapest model you already said could do the job, so it lowers a bill and");
+  console.log("  never a standard.");
+}
+
 async function main() {
+  const wantsExplain = process.argv.includes("--explain");
   const stage = arg("stage");
-  if (!stage) { console.error("usage: route.cjs --stage <plan|build|gate|see> [--state-file f.json] [--config dstack.config.json] [--out f.json]"); process.exit(2); }
+  if (!stage && !wantsExplain) { console.error("usage: route.cjs --stage <plan|build|gate|see> [--state-file f.json] [--config dstack.config.json] [--out f.json]\n       route.cjs --explain [--config dstack.config.json]"); process.exit(2); }
   const configPath = arg("config", "dstack.config.json");
   let config = {};
   try { config = JSON.parse(fs.readFileSync(configPath, "utf8")); }
   catch { console.error(`Dstack routing cannot run: ${configPath} is missing or is not json.`); process.exit(2); }
+  if (wantsExplain) { explain(config); process.exit(0); }
 
   const stateFile = arg("state-file");
   let state = {};
@@ -284,10 +376,10 @@ async function main() {
   if (out) { fs.mkdirSync(path.dirname(out), { recursive: true }); fs.writeFileSync(out, JSON.stringify(decision, null, 2) + "\n"); }
 
   if (decision.kind === "binary") console.log(`${stage}: ${decision.applies ? "applies" : "not_applicable"}, ${decision.why}`);
-  else console.log(`${stage}: ${decision.tier}${decision.effort ? ` (${decision.runner} at ${decision.effort})` : ""}, ${decision.why}`);
+  else console.log(`${stage}: ${decision.tier} -> ${decision.model || decision.runner}${decision.effort ? ` at ${decision.effort}` : ""}${decision.cost != null ? `, about $${decision.cost.toFixed(2)} a run` : ""}\n  tier: ${decision.why}\n  model: ${decision.model_why || "no catalog"}`);
   process.exit(0);
 }
 
 if (require.main === module) main();
 
-module.exports = { decide, measure, route, riskIndex, bandFor, decidingConfidence, QUESTION_SETS, RISK_QUESTIONS, VISIBILITY_QUESTION };
+module.exports = { decide, measure, route, selectModel, estimateCost, riskIndex, bandFor, decidingConfidence, QUESTION_SETS, RISK_QUESTIONS, VISIBILITY_QUESTION };

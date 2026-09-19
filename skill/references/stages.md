@@ -70,6 +70,8 @@ How:
 **Owner reads:** PASS or BLOCK, the major count, one sentence per major.
 **Stop:** S3, S4, S6, S7.
 
+**Triage:** `triage.cjs` classifies a failed run as infra before the round is counted (S4), labels and orders every finding without removing any (S8), and counts distinct ideas for S3's comparison. The gate comment prints findings in, distinct ideas, and how many triage did not read.
+
 **Routing:** `route.cjs --stage gate` chooses the reviewer's effort. The gate floor means a cheap measurement can never buy a shallow review, and no measurement can lower a verdict.
 
 How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile` and `grok.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
@@ -131,9 +133,10 @@ Canonical. Identical to SKILL.md's block; the verifier fails if they differ.
 <!-- dstack-stop-rules-begin -->
 - **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change Routing measures as skippable, or under twenty lines with routing off, the Codex review may be skipped; the owner’s yes may never be skipped.
 - **S2 Prove.** A mutation that stays green is a test that proves nothing. Fix the test or drop the guarantee. A dropped guarantee is removed from the plan's Acceptance and from the PR Claim in the same commit, and if Acceptance changed, Plan runs again for the owner’s yes.
-- **S3 Gate.** Compare each round's in-scope major count to the previous real round's. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
-- **S4 Gate.** An `infra` verdict is not a verdict. Retry once. If it is infra again, hold and say so in the state file.
+- **S3 Gate.** Compare each round's in-scope major count to the previous real round's, counted by distinct idea and not by finding when Triage can compare them. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
+- **S4 Gate.** An `infra` verdict is not a verdict. Triage classifies a failed run before the round is counted, and an unsure reading is infra. Retry once. If it is infra again, hold and say so in the state file.
 - **S5 Ship.** A ticket-backed PR ships in exactly one of two ways. Closes-ticket: the marker from `ticket-directive.cjs --lookup FS-NN` is on the PR and matches the live id and customer message count. Partial-fix: no marker, and the PR body says why the ticket cannot close and what the customer must do, and the owner’s yes names it as a partial fix. Any other shape does not merge.
 - **S6 Ship.** Nothing merges on a conversation. Only the owner’s explicit say-so, only a gate PASS whose `head` equals the live PR head, only `--match-head-commit <full sha>`. The gate runner is invoked with auto-merge off, and Gate refuses to run if `shop.config.json` has `autoMergeOnPass` true.
 - **S7 Routing.** Routing decides what a stage costs, never what it concludes. A router that is missing, slow, or unsure routes to the stage default and says so on the PR. It never routes below a floor, never turns a BLOCK into a PASS, and never skips a stage the owner’s yes is required for. Uncertainty routes up, never down.
+- **S8 Triage.** A triage reading may only add work or add caution. It never removes a finding from the list the adjudicator reads, never lowers a severity a reviewer assigned, never approves a plan, and never turns an infra hold into a pass. An unsure reading resolves toward more work, and any failure returns the input unchanged and says so.
 <!-- dstack-stop-rules-end -->

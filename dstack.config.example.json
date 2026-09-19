@@ -77,19 +77,15 @@
     ],
     "tiers": {
       "skim": {
-        "runner": "codex",
         "effort": "low"
       },
       "standard": {
-        "runner": "codex",
         "effort": "medium"
       },
       "deep": {
-        "runner": "codex",
         "effort": "high"
       },
       "max": {
-        "runner": "codex",
         "effort": "xhigh"
       }
     },
@@ -137,7 +133,12 @@
         "default": "deep",
         "ceiling": "max",
         "skipAtOrBelow": "skim",
-        "$comment": "Replaces skipUnderLines. A plan review is skipped when the change measures as low blast radius on a surface with no floor, not when someone counted lines. The owner's yes is still never skipped."
+        "$comment": "Replaces skipUnderLines. A plan review is skipped when the change measures as low blast radius on a surface with no floor, not when someone counted lines. The owner's yes is still never skipped.",
+        "typical": {
+          "in": 25000,
+          "out": 8000,
+          "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
+        }
       },
       "build": {
         "kind": "ladder",
@@ -145,14 +146,26 @@
         "default": "standard",
         "ceiling": "deep",
         "$comment": "surfaceFloorsApply is false because a surface floor is about how hard a change is scrutinized, and Build is not a scrutiny stage. The builder is capped below the top rung on purpose: if a build needs the top rung, the plan was not finished. Plan and Gate still honor every surface floor.",
-        "surfaceFloorsApply": false
+        "surfaceFloorsApply": false,
+        "typical": {
+          "in": 60000,
+          "out": 20000,
+          "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
+        }
       },
       "gate": {
         "kind": "ladder",
         "floor": "standard",
         "default": "max",
         "ceiling": "max",
-        "$comment": "The gate is the one stage allowed to cost whatever it costs. Its floor exists so a cheap measurement can never buy a shallow review."
+        "$comment": "The gate is the one stage allowed to cost whatever it costs. Its floor exists so a cheap measurement can never buy a shallow review.",
+        "typical": {
+          "in": 80000,
+          "out": 6000,
+          "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
+        },
+        "pin": null,
+        "$comment_pin": "Set to a model id in the catalog to force this stage onto it and skip cost ranking. Null means pick the cheapest model that serves the tier."
       },
       "see": {
         "kind": "binary",
@@ -161,10 +174,119 @@
         "onUnknown": "the router could not say whether a customer would see this, so See it runs",
         "$comment": "Replaces appliesWhenChanged. The threshold is low on purpose: a one in four chance that a customer sees a difference is enough to spend a browser run. This also catches the case the path glob never could, a server side change that alters what is on screen."
       }
+    },
+    "models": {
+      "$comment": "Your catalog, and the only list the router may pick from. Prices are US dollars per million tokens, first party Anthropic API rates as of 2026-06-24. 'serves' is the highest work you trust that model with, and it is your call, not the router's: the router only ever picks the cheapest model you already said could do the job. Check live prices at anthropic.com/pricing before trusting a number here.",
+      "claude-opus-5": {
+        "provider": "anthropic",
+        "runner": "claude",
+        "in": 5.0,
+        "out": 25.0,
+        "context": 1000000,
+        "serves": [
+          "skim",
+          "standard",
+          "deep",
+          "max"
+        ]
+      },
+      "claude-sonnet-5": {
+        "provider": "anthropic",
+        "runner": "claude",
+        "in": 3.0,
+        "out": 15.0,
+        "context": 1000000,
+        "serves": [
+          "skim",
+          "standard",
+          "deep"
+        ]
+      },
+      "claude-haiku-4-5": {
+        "provider": "anthropic",
+        "runner": "claude",
+        "in": 1.0,
+        "out": 5.0,
+        "context": 200000,
+        "serves": [
+          "skim"
+        ]
+      },
+      "codex": {
+        "provider": "openai",
+        "runner": "codex",
+        "in": null,
+        "out": null,
+        "context": null,
+        "serves": [
+          "skim",
+          "standard",
+          "deep",
+          "max"
+        ],
+        "$comment": "A CLI on a subscription, so it has no per token price. An unpriced model is never chosen on cost; it wins only when you pin it or when nothing priced serves the tier."
+      },
+      "gemini": {
+        "provider": "google",
+        "runner": "gemini",
+        "in": null,
+        "out": null,
+        "context": null,
+        "serves": [
+          "skim",
+          "standard",
+          "deep"
+        ]
+      },
+      "grok": {
+        "provider": "xai",
+        "runner": "grok",
+        "in": null,
+        "out": null,
+        "context": null,
+        "serves": [
+          "skim",
+          "standard",
+          "deep"
+        ]
+      }
     }
   },
   "style": {
     "noEmDashes": true,
     "commitTrailer": "Co-Authored-By: Claude <noreply@anthropic.com>"
+  },
+  "triage": {
+    "$comment": "Reading the review, not the code. See skill/references/triage.md. The invariant: a reading may only add work or add caution. Set enabled to false and every judgement returns its input unchanged.",
+    "enabled": true,
+    "endpoint": "https://api.typesafe.ai/v1/systemone",
+    "model": "jev-latest",
+    "apiKeyEnv": "TYPESAFE_API_KEY",
+    "timeoutMs": 6000,
+    "infra": {
+      "treatAsInfraAtOrAbove": 0.35,
+      "$comment": "Low on purpose. An unsure reading resolves to infra, which costs one retry, and S4 caps the retry at one and then holds."
+    },
+    "findings": {
+      "majorAtOrAbove": 2,
+      "inScopeAtOrAbove": 0.6,
+      "guardedAtOrAbove": 0.7,
+      "maxFindings": 60,
+      "concurrency": 6,
+      "$comment": "Labels and orders. A cap pads rather than shortens, so a finding past it arrives unread carrying the reviewer's own severity, and the unread count is printed."
+    },
+    "progress": {
+      "sameIdeaAtOrAbove": 0.6,
+      "concurrency": 6
+    },
+    "classHits": {
+      "rankAtOrAbove": 0.5,
+      "maxHits": 200,
+      "concurrency": 6
+    },
+    "plan": {
+      "requireAtOrAbove": 0.6,
+      "$comment": "Returns not_ready or no_objection. There is no verdict that means approved."
+    }
   }
 }

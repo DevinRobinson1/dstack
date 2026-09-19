@@ -66,11 +66,12 @@ Canonical. `references/stages.md` carries this block verbatim under the same hea
 <!-- dstack-stop-rules-begin -->
 - **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change Routing measures as skippable, or under twenty lines with routing off, the Codex review may be skipped; the owner’s yes may never be skipped.
 - **S2 Prove.** A mutation that stays green is a test that proves nothing. Fix the test or drop the guarantee. A dropped guarantee is removed from the plan's Acceptance and from the PR Claim in the same commit, and if Acceptance changed, Plan runs again for the owner’s yes.
-- **S3 Gate.** Compare each round's in-scope major count to the previous real round's. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
-- **S4 Gate.** An `infra` verdict is not a verdict. Retry once. If it is infra again, hold and say so in the state file.
+- **S3 Gate.** Compare each round's in-scope major count to the previous real round's, counted by distinct idea and not by finding when Triage can compare them. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
+- **S4 Gate.** An `infra` verdict is not a verdict. Triage classifies a failed run before the round is counted, and an unsure reading is infra. Retry once. If it is infra again, hold and say so in the state file.
 - **S5 Ship.** A ticket-backed PR ships in exactly one of two ways. Closes-ticket: the marker from `ticket-directive.cjs --lookup FS-NN` is on the PR and matches the live id and customer message count. Partial-fix: no marker, and the PR body says why the ticket cannot close and what the customer must do, and the owner’s yes names it as a partial fix. Any other shape does not merge.
 - **S6 Ship.** Nothing merges on a conversation. Only the owner’s explicit say-so, only a gate PASS whose `head` equals the live PR head, only `--match-head-commit <full sha>`. The gate runner is invoked with auto-merge off, and Gate refuses to run if `shop.config.json` has `autoMergeOnPass` true.
 - **S7 Routing.** Routing decides what a stage costs, never what it concludes. A router that is missing, slow, or unsure routes to the stage default and says so on the PR. It never routes below a floor, never turns a BLOCK into a PASS, and never skips a stage the owner’s yes is required for. Uncertainty routes up, never down.
+- **S8 Triage.** A triage reading may only add work or add caution. It never removes a finding from the list the adjudicator reads, never lowers a severity a reviewer assigned, never approves a plan, and never turns an infra hold into a pass. An unsure reading resolves toward more work, and any failure returns the input unchanged and says so.
 <!-- dstack-stop-rules-end -->
 
 ## What may be skipped
@@ -111,6 +112,12 @@ Stages that spend measure the change first: `node scripts/route.cjs --stage <sta
 
 It retires two proxies: the plan review is skipped on a measurement, not a line count, and See it runs when a customer would notice, not when a path matched `client/`. With no key or `enabled: false`, every stage runs at its default and says so.
 
+## Reading the review
+
+Gate and Plan also triage: `scripts/triage.cjs` judges whether a failed run was infra, ranks findings and class-rule grep hits, counts distinct ideas across rounds for S3, and holds a plan back that cannot carry a review. `references/triage.md` is the contract.
+
+The invariant is S8, and it is enforced in code: a reading may only add work or add caution. Nothing is ever removed from what the adjudicator reads.
+
 ## Pre-flight
 
 Before routing, load `.dstack/state.json`. If it does not exist and the stage is not Intake, refuse. Then check the stage's `Needs` in `references/stages.md`: the predecessor's recorded state, and the named artifact sections present and non-empty. Refuse and print this if anything is missing:
@@ -130,7 +137,8 @@ Before reporting a stage done, print and verify:
     - produced: <artifact path, or "not_built: <note>">
     - owner reads: <the sentence they will see>
     - PR body sections present and non-empty: <list, or "not applicable before Prove">
-    - routing: <tier, the one sentence why> | off, <reason>
+    - routing: <tier, model, about $<cost> a run, the one sentence why> | off, <reason>
+    - triage: <findings in, distinct ideas, unread> | off, <reason> | not applicable
     - stop rules checked: <S-ids that apply and their result>
     - em dashes in anything written: 0
 

@@ -51,7 +51,29 @@ Four rules bound it, and the fixtures in `skill/scripts/route.test.cjs` prove ea
 
 Uncertainty routes up, never down: a reading the model is not confident about costs a rung. Floors only ever raise, and there are deliberately no ceilings per surface, because a documentation change that measures as high risk is a misclassification and capping it would be the silent downgrade this whole process exists to remove.
 
-The full contract, including the seven further uses this opens up, is in [skill/references/routing.md](skill/references/routing.md). Routing is optional: one key turns it off and every stage returns to a fixed effort.
+A tier is a class of work, not a model. Which model serves a tier is a line in your catalog, and the router never writes it:
+
+```json
+"claude-sonnet-5": { "in": 3.00, "out": 15.00, "serves": ["skim", "standard", "deep"] }
+```
+
+`serves` is your statement of what you trust a model with. All the router does is pick the cheapest model you already said could do the job, which is why this lowers a bill and cannot lower a standard. Cheapest is computed per stage, because the shape of the work decides it: a gate reads 80k tokens and writes 6k, a build writes 20k, and a model with cheap input and dear output wins one and loses the other. `node scripts/route.cjs --explain` prints the whole comparison.
+
+The full contract is in [skill/references/routing.md](skill/references/routing.md). Routing is optional: one key turns it off and every stage returns to a fixed effort.
+
+## Reading the review, not the code
+
+Gate is the most expensive stage and the one that wastes the most. A round that died on a network timeout is read as a round. Every finding is adjudicated at the same weight, including the two in fifteen that were guarded on the very next line. And S3 asked whether the major count fell while comparing two lists that may not describe the same ideas.
+
+Triage answers the questions those rules assumed someone could answer: was this failure infra, which findings are worth reading first, which of them is the same idea the last round already raised, which grep hits share the defect's shape, and can this plan carry a review at all.
+
+One sentence makes it safe, and it is stop rule S8:
+
+> **A triage reading may only ever add work or add caution.**
+
+It labels and orders findings but never removes one. It raises a severity but never lowers one a reviewer assigned. It holds a plan back but has no verdict that means approved. An unsure infra reading costs a retry. Every failure returns the input unchanged and says so. Six fixtures hold that invariant, and the verifier fails if the plan judgement ever grows a verdict that means yes.
+
+Contract in [skill/references/triage.md](skill/references/triage.md).
 
 ## Status
 
@@ -65,7 +87,8 @@ Under construction, in the open. Plan 1 (the skill shell) is written, reviewed a
 | 4 | See it: real browser evidence | Not started |
 | 5 | Watch: deploy observation | Not started |
 | 6 | Retro: metrics that close the loop | Not started |
-| 7 | Jev routing: measured tiers, and the end of proxy heuristics | Built, proven, ungated |
+| 7 | Jev routing: measured tiers, model catalog, and the end of proxy heuristics | Built, proven, ungated |
+| 8 | Triage: infra verdicts, finding ranking, distinct-idea progress | Built, proven, ungated |
 
 Plans and their full review logs live in [docs/plans](docs/plans). The argument is the artifact; it is kept whole on purpose.
 
