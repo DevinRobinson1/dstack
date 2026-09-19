@@ -125,6 +125,11 @@ if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not poin
   const r = cfg.routing;
   if (!r) { problems.push("dstack.config.example.json: no routing block"); return; }
 
+  const providers = Object.keys(require("./jev.cjs").PROVIDERS);
+  for (const [block, b] of [["routing", r], ["triage", cfg.triage]]) {
+    if (b && b.provider && !providers.includes(b.provider)) problems.push(`${block}: provider "${b.provider}" is not one jev.cjs serves (${providers.join(", ")})`);
+  }
+
   const order = r.ladderOrder || [];
   if (order.length < 2) problems.push("routing: ladderOrder needs at least two tiers");
   for (const t of order) if (!r.tiers || !r.tiers[t]) problems.push(`routing: ladderOrder names "${t}", which tiers does not define`);

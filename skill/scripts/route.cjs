@@ -299,7 +299,8 @@ async function measure(stage, state, routing) {
   const questions = QUESTION_SETS[stage];
   if (!questions) return { ok: false, reason: `there is no question set for ${stage}`, answers: null };
   return jev.ask(state, questions, {
-    endpoint: routing.endpoint, model: routing.model, apiKeyEnv: routing.apiKeyEnv, timeoutMs: routing.timeoutMs,
+    provider: routing.provider, endpoint: routing.endpoint, model: routing.model,
+    apiKeyEnv: routing.apiKeyEnv, apiKeyFile: routing.apiKeyFile, timeoutMs: routing.timeoutMs,
   });
 }
 

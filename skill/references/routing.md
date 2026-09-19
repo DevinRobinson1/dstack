@@ -20,6 +20,24 @@ No model name, no effort level, and no price appears in a question. The question
 
 `dstack.config.json` holds the ladder, the weights, the bands and the floors. Changing which model runs a deep review is a config edit. The question set does not move.
 
+## Two ways to reach it, and they are not the same wire format
+
+`provider: "vercel"` goes through the Vercel AI Gateway as `typesafe-ai/jev` on an `AI_GATEWAY_API_KEY`. `provider: "typesafe"` goes to TypeSafe directly on a `TYPESAFE_API_KEY`. Same model, different envelope, and the differences are not cosmetic:
+
+| | TypeSafe direct | Vercel gateway |
+|---|---|---|
+| model id | in the body | in an `ai-model-id` header, with a protocol version and a spec version beside it |
+| a yes or no question | `type: "noul"`, answered on `.noul` | `type: "boolean"`, answered on `.probability` |
+| confidence | on the answer | on `providerMetadata.typesafe.confidence`, keyed by question |
+| usage | `input_tokens` | `inputTokens` |
+| cost | not reported | `providerMetadata.gateway.marketCost` |
+
+The third row is the dangerous one. Read confidence off the answer on a gateway response and it is `undefined`, which normalizes to zero, which reads as total uncertainty, which escalates every routed decision to the top tier forever and looks like caution rather than a bug. That is why `jev.cjs` normalizes both providers into one canonical answer shape and no caller ever touches a raw response.
+
+The gateway caps a request at 64,000 tokens and the state at 32,000. The client caps sit far under both.
+
+**Finding the key.** `apiKeyEnv` names the variable. If it is unset, and `apiKeyFile` names a file, the key is read from there: a `KEY=value` line, `export` prefix and quotes tolerated. That exists because the usual reason a key does not work is that it was exported in a terminal and never reached a tool shell, while it sits in a gitignored env file the project already keeps.
+
 ## How a tier is chosen
 
 1. **Read.** Every answer is normalized to a number between 0 and 1, so a score and a probability are comparable. A score becomes its level divided by the top level. A noul is its probability as it stands. A choice carries no number; it acts through the floors instead.

@@ -242,12 +242,56 @@ const CLIENT_CASES = [
     const out = jev.redact("y".repeat(9000));
     return [typeof out === "string", out.length < 5000];
   }],
-  ["a missing api key is a failure, never an answer", async () => {
-    const saved = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, {});
-    if (saved !== undefined) process.env.TYPESAFE_API_KEY = saved;
-    return [res.ok === false, res.answers === null, /TYPESAFE_API_KEY/.test(res.reason)];
+  ["a missing api key is a failure naming that provider's own variable", async () => {
+    const checks = [];
+    for (const [provider, envName] of [["typesafe", "TYPESAFE_API_KEY"], ["vercel", "AI_GATEWAY_API_KEY"]]) {
+      const saved = process.env[envName];
+      delete process.env[envName];
+      const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider });
+      if (saved !== undefined) process.env[envName] = saved;
+      checks.push(res.ok === false, res.answers === null, new RegExp(envName).test(res.reason));
+    }
+    return checks;
+  }],
+  ["an unknown provider is refused, not guessed at", async () => {
+    const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider: "openrouter" });
+    return [res.ok === false, /not one jev.cjs serves|unknown routing provider/.test(res.reason)];
+  }],
+  ["the gateway's boolean becomes a noul, and its confidence is found", () => {
+    const parsed = jev.PROVIDERS.vercel.parse({
+      answers: { a: { type: "boolean", probability: 0.99 }, b: { type: "score", score: 2.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
+      usage: { inputTokens: 414, outputTokens: 71 },
+      providerMetadata: { typesafe: { confidence: { b: 0.94 } }, gateway: { marketCost: "0.000017388" } },
+    });
+    const a = jev.reading(parsed.answers.a);
+    const b = jev.reading(parsed.answers.b);
+    return [
+      parsed.answers.a.type === "noul", a.value === 0.99,
+      // The trap: confidence hangs off providerMetadata, not the answer. Read
+      // from the answer it is undefined, normalizes to 0, and escalates forever.
+      b.confidence === 0.94, b.raw === 2.94, b.top === 3,
+      parsed.usage.input_tokens === 414, parsed.cost === 0.000017388,
+    ];
+  }],
+  ["a noul question is sent to the gateway as a boolean", () => {
+    const built = jev.PROVIDERS.vercel.build("s", { q: { type: "noul", instructions: "?" }, c: { type: "choice", instructions: "?", criteria: {} } }, {}, "k");
+    return [built.body.questions.q.type === "boolean", built.body.questions.c.type === "choice",
+            built.headers["ai-model-id"] === "typesafe-ai/jev",
+            built.headers["ai-gateway-protocol-version"] === "0.0.1",
+            built.headers["ai-evaluation-model-specification-version"] === "4",
+            built.body.model === undefined];
+  }],
+  ["a key in an env file is found when the shell does not have it", () => {
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "dstack-")), "env");
+    fs.writeFileSync(f, 'OTHER=1\nexport AI_GATEWAY_API_KEY="vck_fixture_value"\nMORE=2\n');
+    const saved = process.env.AI_GATEWAY_API_KEY;
+    delete process.env.AI_GATEWAY_API_KEY;
+    const found = jev.readKey("AI_GATEWAY_API_KEY", f);
+    const missing = jev.readKey("NOT_PRESENT", f);
+    if (saved !== undefined) process.env.AI_GATEWAY_API_KEY = saved;
+    fs.rmSync(path.dirname(f), { recursive: true, force: true });
+    return [found === "vck_fixture_value", missing === null, jev.readKey("X", null) === null];
   }],
 ];
 

@@ -63,9 +63,8 @@
   "routing": {
     "$comment": "Jev decides what a stage costs, this file decides what that means. Questions describe the work and never name a model, so the question set does not go stale when the lineup changes. Read skill/references/routing.md before changing a number here.",
     "enabled": true,
-    "endpoint": "https://api.typesafe.ai/v1/systemone",
-    "model": "jev-latest",
-    "apiKeyEnv": "TYPESAFE_API_KEY",
+    "model": "typesafe-ai/jev",
+    "apiKeyEnv": "AI_GATEWAY_API_KEY",
     "timeoutMs": 6000,
     "escalateBelowConfidence": 0.7,
     "$comment_escalate": "A reading less certain than this routes one rung UP. Uncertainty costs money, never safety. Set to 0 to turn escalation off, which is not recommended.",
@@ -250,7 +249,9 @@
           "deep"
         ]
       }
-    }
+    },
+    "provider": "vercel",
+    "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead."
   },
   "style": {
     "noEmDashes": true,
@@ -259,9 +260,8 @@
   "triage": {
     "$comment": "Reading the review, not the code. See skill/references/triage.md. The invariant: a reading may only add work or add caution. Set enabled to false and every judgement returns its input unchanged.",
     "enabled": true,
-    "endpoint": "https://api.typesafe.ai/v1/systemone",
-    "model": "jev-latest",
-    "apiKeyEnv": "TYPESAFE_API_KEY",
+    "model": "typesafe-ai/jev",
+    "apiKeyEnv": "AI_GATEWAY_API_KEY",
     "timeoutMs": 6000,
     "infra": {
       "treatAsInfraAtOrAbove": 0.35,
@@ -287,6 +287,8 @@
     "plan": {
       "requireAtOrAbove": 0.6,
       "$comment": "Returns not_ready or no_objection. There is no verdict that means approved."
-    }
+    },
+    "provider": "vercel",
+    "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead."
   }
 }

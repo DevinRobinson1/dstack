@@ -24,12 +24,88 @@ const https = require("https");
 const { URL } = require("url");
 
 const DEFAULTS = {
-  endpoint: "https://api.typesafe.ai/v1/systemone",
-  model: "jev-latest",
-  apiKeyEnv: "TYPESAFE_API_KEY",
+  provider: "vercel",
+  model: "typesafe-ai/jev",
   timeoutMs: 6000,
   retries: 1,
 };
+
+// Two ways to reach the same model, and they are not the same wire format.
+//
+// The gateway does not put confidence on the answer. It hangs it off
+// providerMetadata.typesafe.confidence, keyed by question. Reading it from the
+// answer returns undefined, which normalizes to zero, which reads as maximum
+// uncertainty, which escalates every routed decision to the top tier forever.
+// That is why both providers normalize into one canonical answer shape here
+// rather than letting callers touch a raw response.
+const PROVIDERS = {
+  typesafe: {
+    endpoint: "https://api.typesafe.ai/v1/systemone",
+    apiKeyEnv: "TYPESAFE_API_KEY",
+    defaultModel: "jev-latest",
+    build(state, questions, cfg, key) {
+      return {
+        headers: { Authorization: `Bearer ${key}` },
+        body: { state, model: cfg.model || "jev-latest", questions },
+      };
+    },
+    parse(json) {
+      return { answers: json.answers, usage: json.usage || null, cost: null, model: json.model || null };
+    },
+  },
+
+  vercel: {
+    endpoint: "https://ai-gateway.vercel.sh/v4/ai/evaluation-model",
+    apiKeyEnv: "AI_GATEWAY_API_KEY",
+    defaultModel: "typesafe-ai/jev",
+    // Hard caps the gateway enforces: 64k tokens per request, 32k for state.
+    // The client caps below keep a bundle far under both.
+    build(state, questions, cfg, key) {
+      const translated = {};
+      for (const [name, q] of Object.entries(questions)) {
+        // The gateway calls a noul a boolean. Same question, different word.
+        translated[name] = q.type === "noul" ? Object.assign({}, q, { type: "boolean" }) : q;
+      }
+      return {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "ai-gateway-protocol-version": "0.0.1",
+          "ai-model-id": cfg.model || "typesafe-ai/jev",
+          "ai-evaluation-model-specification-version": "4",
+        },
+        body: { state, questions: translated, providerOptions: {} },
+      };
+    },
+    parse(json) {
+      const meta = json.providerMetadata || {};
+      const conf = (meta.typesafe && meta.typesafe.confidence) || {};
+      const answers = {};
+      for (const [name, a] of Object.entries(json.answers || {})) {
+        if (a.type === "boolean") answers[name] = { type: "noul", noul: a.probability };
+        else answers[name] = Object.assign({}, a, conf[name] != null ? { confidence: conf[name] } : {});
+      }
+      const usage = json.usage ? { input_tokens: json.usage.inputTokens, output_tokens: json.usage.outputTokens } : null;
+      const gw = meta.gateway || {};
+      return { answers, usage, cost: gw.marketCost != null ? Number(gw.marketCost) : null, model: (gw.routing && gw.routing.canonicalSlug) || null };
+    },
+  },
+};
+
+// The key may live in an env file the project already keeps out of git, which
+// is where a key that never reaches a tool shell usually is. Read, never log.
+function readKey(envName, envFile) {
+  if (process.env[envName]) return process.env[envName];
+  if (!envFile) return null;
+  let text;
+  try { text = require("fs").readFileSync(envFile, "utf8"); } catch { return null; }
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(new RegExp(`^\\s*(?:export\\s+)?${envName}\\s*=\\s*(.*)$`));
+    if (!m) continue;
+    const v = m[1].trim().replace(/^["']|["']$/g, "");
+    if (v) return v;
+  }
+  return null;
+}
 
 // Fields a state bundle may carry. Anything else is dropped before the request
 // is built, so a caller cannot widen what leaves the machine by accident.
@@ -97,27 +173,32 @@ function post(url, body, headers, timeoutMs) {
 // Never rejects. On any failure, ok is false and reason is a sentence.
 async function ask(state, questions, opts) {
   const cfg = Object.assign({}, DEFAULTS, opts || {});
-  const key = process.env[cfg.apiKeyEnv];
-  if (!key) return { ok: false, reason: `no ${cfg.apiKeyEnv} in the environment`, answers: null, usage: null };
+  const provider = PROVIDERS[cfg.provider];
+  if (!provider) return { ok: false, reason: `unknown routing provider "${cfg.provider}", expected one of ${Object.keys(PROVIDERS).join(", ")}`, answers: null, usage: null };
+  const envName = cfg.apiKeyEnv || provider.apiKeyEnv;
+  const key = readKey(envName, cfg.apiKeyFile);
+  if (!key) return { ok: false, reason: `no ${envName} in the environment${cfg.apiKeyFile ? ` or in ${cfg.apiKeyFile}` : ""}`, answers: null, usage: null };
   if (!questions || !Object.keys(questions).length) return { ok: false, reason: "no questions were asked", answers: null, usage: null };
 
-  const body = { state: redact(state), model: cfg.model, questions };
-  const headers = { Authorization: `Bearer ${key}` };
+  const endpoint = cfg.endpoint || provider.endpoint;
+  const built = provider.build(redact(state), questions, cfg, key);
+  const { headers, body } = built;
 
   let last = null;
   for (let attempt = 0; attempt <= cfg.retries; attempt++) {
-    const res = await post(cfg.endpoint, body, headers, cfg.timeoutMs);
+    const res = await post(endpoint, body, headers, cfg.timeoutMs);
     if (res.error) { last = `the router could not be reached: ${res.error}`; continue; }
-    if (res.status === 401 || res.status === 403) return { ok: false, reason: `the router rejected the key in ${cfg.apiKeyEnv} (${res.status})`, answers: null, usage: null };
+    if (res.status === 401 || res.status === 403) return { ok: false, reason: `the router rejected the key in ${envName} (${res.status})`, answers: null, usage: null };
     if (res.status === 429) { last = "the router is rate limited (429)"; continue; }
     if (res.status >= 500) { last = `the router returned ${res.status}`; continue; }
     if (res.status !== 200) return { ok: false, reason: `the router returned ${res.status}: ${res.text.slice(0, 200)}`, answers: null, usage: null };
     let parsed;
     try { parsed = JSON.parse(res.text); } catch { return { ok: false, reason: "the router returned something that is not json", answers: null, usage: null }; }
     if (!parsed || !parsed.answers) return { ok: false, reason: "the router returned no answers block", answers: null, usage: null };
-    const missing = Object.keys(questions).filter((k) => !(k in parsed.answers));
+    const norm = provider.parse(parsed);
+    const missing = Object.keys(questions).filter((k) => !(k in norm.answers));
     if (missing.length) return { ok: false, reason: `the router did not answer: ${missing.join(", ")}`, answers: null, usage: null };
-    return { ok: true, reason: null, answers: parsed.answers, usage: parsed.usage || null, model: parsed.model || cfg.model };
+    return { ok: true, reason: null, answers: norm.answers, usage: norm.usage, cost: norm.cost, model: norm.model || cfg.model, warnings: parsed.warnings || [] };
   }
   return { ok: false, reason: last || "the router failed for an unstated reason", answers: null, usage: null };
 }
@@ -150,4 +231,4 @@ function reading(answer) {
 function clamp01(n) { return Math.min(1, Math.max(0, Number(n) || 0)); }
 function num(v, fallback) { return Number.isFinite(Number(v)) ? Number(v) : fallback; }
 
-module.exports = { ask, reading, redact, DEFAULTS, ALLOWED_STATE_KEYS, CAPS };
+module.exports = { ask, reading, redact, readKey, DEFAULTS, PROVIDERS, ALLOWED_STATE_KEYS, CAPS };

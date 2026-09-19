@@ -310,7 +310,7 @@ async function pool(items, limit, fn) {
   return out;
 }
 
-const opts = (t) => ({ endpoint: t.endpoint, model: t.model, apiKeyEnv: t.apiKeyEnv, timeoutMs: t.timeoutMs });
+const opts = (t) => ({ provider: t.provider, endpoint: t.endpoint, model: t.model, apiKeyEnv: t.apiKeyEnv, apiKeyFile: t.apiKeyFile, timeoutMs: t.timeoutMs });
 
 async function measureInfra(runnerOutput, t) {
   if (!t || !t.enabled) return off("triage is off");

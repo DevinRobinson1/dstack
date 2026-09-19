@@ -99,7 +99,7 @@ Requires [Claude Code](https://claude.com/claude-code) and [Node.js](https://nod
 
 A missing CLI is announced once and that route is skipped. A missing CLI never silently downgrades a gate to a pass.
 
-Routing additionally reads `TYPESAFE_API_KEY` for the System One model that decides what each stage costs. It is optional. Without it, every stage runs at the fixed effort it used before routing existed, and says so.
+Routing additionally needs a key for the System One model that decides what each stage costs, reached either through the Vercel AI Gateway (`AI_GATEWAY_API_KEY`, model `typesafe-ai/jev`) or from TypeSafe directly (`TYPESAFE_API_KEY`). It is optional. Without it, every stage runs at the fixed effort it used before routing existed, and says so.
 
 ```bash
 git clone https://github.com/DevinRobinson1/dstack.git
