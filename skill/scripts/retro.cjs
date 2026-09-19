@@ -208,6 +208,12 @@ function collectDecisions(dir) {
     out.push({ t: "decision", stage: d.stage, tier: d.tier || null, model: d.model || null, risk: d.risk,
                confidence: d.confidence, surface: d.surface || null, routed: !!d.routed, escalated: !!d.escalated,
                floor: d.floorApplied || null, est_cost: d.cost == null ? null : d.cost });
+    // The artifact already carries what the router actually spent. Question 4
+    // asks whether the configured shapes match reality, so take it from here
+    // rather than asking a stage to report a number it would have to guess.
+    if (d.usage && (d.usage.input_tokens != null || d.usage.output_tokens != null)) {
+      out.push({ t: "usage", stage: d.stage, in: d.usage.input_tokens || 0, out: d.usage.output_tokens || 0 });
+    }
   }
   return out;
 }
@@ -258,6 +264,26 @@ function main() {
   let config = {};
   try { config = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch { config = {}; }
   const file = arg("ledger", LEDGER);
+
+  // --record <type> k=v k=v ...  One row, from a stage, at the point the
+  // thing being recorded actually happened. This is the writer the ledger
+  // was merged without.
+  if (has("record")) {
+    const i = process.argv.indexOf("--record");
+    const type = process.argv[i + 1];
+    if (!type || !TYPES.has(type)) { console.error(`usage: retro.cjs --record <${[...TYPES].join("|")}> key=value ...`); process.exit(2); }
+    const entry = { t: type, at: arg("at", "") || null };
+    for (const kv of process.argv.slice(i + 2)) {
+      const eq = kv.indexOf("=");
+      if (eq === -1 || kv.startsWith("--")) continue;
+      const k = kv.slice(0, eq), v = kv.slice(eq + 1);
+      entry[k] = v === "true" ? true : v === "false" ? false : (v !== "" && !isNaN(Number(v)) ? Number(v) : v);
+    }
+    const res = record(entry, { file, enabled: (config.retro || {}).enabled });
+    if (!res.ok) { console.error(`Retro did not record: ${res.reason}`); process.exit(1); }
+    console.log(`Recorded a ${type} row in ${res.file}.`);
+    process.exit(0);
+  }
 
   if (has("collect")) {
     const decisions = collectDecisions(arg("routing-dir", ".dstack/routing"));

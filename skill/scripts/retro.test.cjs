@@ -128,6 +128,26 @@ const CASES = [
     const s = res.shapes.find((x) => x.stage === "build");
     return [s.enough === true, s.finding === true, s.measured.in === 120000, s.declared.in === 60000, /configured 60000\/20000, measured 120000\/40000/.test(s.why)];
   }],
+  ["collect emits a usage row beside the decision, from what the router spent", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    fs.writeFileSync(path.join(d, "gate-abc.json"), JSON.stringify({
+      stage: "gate", tier: "max", model: "m", risk: 2.3, cost: 0.5,
+      usage: { input_tokens: 984, output_tokens: 157 },
+    }));
+    const rows = r.collectDecisions(d);
+    fs.rmSync(d, { recursive: true, force: true });
+    const usage = rows.find((x) => x.t === "usage");
+    // Question 4 asks whether the configured shape matches reality. Taking it
+    // from the artifact beats asking a stage to report a number it would guess.
+    return [rows.length === 2, !!usage, usage.in === 984, usage.out === 157, usage.stage === "gate"];
+  }],
+  ["a routing artifact with no usage block yields a decision and no usage row", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    fs.writeFileSync(path.join(d, "plan-abc.json"), JSON.stringify({ stage: "plan", tier: "deep", model: "m" }));
+    const rows = r.collectDecisions(d);
+    fs.rmSync(d, { recursive: true, force: true });
+    return [rows.length === 1, rows[0].t === "decision"];
+  }],
   ["the gate adapter is one function, and reads BLOCK and infra", () => {
     const b = r.adaptGateRounds({ head: "abc", round: 2, majors: 3, verdict: "BLOCK" });
     const i = r.adaptGateRounds({ head: "abc", round: 1, verdict: "infra" });

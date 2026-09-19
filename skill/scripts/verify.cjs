@@ -252,8 +252,22 @@ if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not poin
     const f = res.findings.find((x) => /tier a change was built at/.test(x.question));
     if (!f || f.enough !== false) problems.push("retro: fit() reported on a group below minPerGroup, which S9 forbids");
     for (const x of res.findings) if (typeof x.n !== "number") problems.push("retro: fit() emitted a finding with no sample count");
+    // The defect this check exists for: Retro was merged as a reader with no
+    // writer. Every row type it reads must have a contract that produces it,
+    // or the question that row answers is unanswerable and nobody notices,
+    // because the report says "not enough evidence yet" either way.
+    const contracts = read("references/stages.md") + read("references/pr-evidence.md");
+    for (const type of mod.TYPES) {
+      if (!new RegExp(`retro\\.cjs --record ${type}\\b`).test(contracts))
+        problems.push(`retro: nothing produces a "${type}" row. A contract in stages.md must name "retro.cjs --record ${type}", or the questions it feeds can never be answered.`);
+    }
   } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
 })();
+
+// Prices go stale the day a provider changes them. Something must say when to
+// check, or catalog.cjs is a tool nobody is told to run.
+if (!/catalog\.cjs/.test(read("references/stages.md") + skill))
+  problems.push("catalog: no contract names catalog.cjs, so nothing says when to check prices against the gateway");
 
 // Triage: thresholds must be numbers in range, and the invariant has to be
 // stated where a reader of the contract will hit it.

@@ -26,6 +26,21 @@ For a shop shipping a few pull requests a week, question 2 takes months to answe
 4. **Are the token shapes right?** Measured tokens per stage against the configured `typical`. Those shapes decide the entire cost ranking, and they were guessed.
 5. **Does risk predict rounds?** The risk index against the number of real gate rounds. Infra rounds are not rounds, per S4, and are excluded here too.
 
+## Who writes the rows
+
+Retro was first merged as a reader with no writer. Nothing called `record()`, no contract named it, and every one of the five questions was therefore unanswerable: not short of data, but with no path by which data could ever arrive. The report said "not enough evidence yet" and would have said it forever, which is the worst kind of failure here because it looks exactly like patience.
+
+The producers are now in the stage contracts, and the verifier fails if any row type loses its producer:
+
+| Row | Written by | Feeds |
+|---|---|---|
+| `decision`, `usage` | Prove, by `--collect` over the routing artifacts the router already wrote | questions 1, 2, 4 |
+| `outcome` | Gate, once per round, infra rounds marked and excluded | questions 1, 2 |
+| `adjudication` | Gate, once per finding, after it meets source | question 3 |
+| `ship` | Ship, after the merge | question 5 |
+
+Nothing backfills. A row invented after the fact, from memory of how a round went, is not evidence, and a ledger that accepts one cannot be trusted about any of the others.
+
 ## The ledger
 
 `.dstack/retro/ledger.jsonl`, append only, one JSON object per line. Five row types: `decision`, `outcome`, `usage`, `adjudication`, `ship`.

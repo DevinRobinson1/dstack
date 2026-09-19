@@ -53,6 +53,8 @@ How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_C
 **Owner reads:** "6 guarantees, 6 seen to fail, on <short sha>, proof command green." If it is 5 of 6, the ledger names the sixth and why, and the Claim no longer promises it.
 **Stop:** S2.
 
+**Retro:** after the PR exists, `node scripts/retro.cjs --collect --pr N --head <full sha>` reads the routing artifacts and appends one `retro.cjs --record decision` row and one `retro.cjs --record usage` row per routed stage. These are what questions 1, 2 and 4 are computed from, and they are free: the router already wrote them.
+
 How:
 - Read the full diff against the plan. Anything outside the plan's Change section is a deviation and is named in the PR body.
 - Run the proof command yourself. Codex's pasted output does not count.
@@ -69,6 +71,8 @@ How:
 **Produces:** the round directory `.4-brain-out/<date>-pr<N>/round-<n>/` with `verdict.json`, and the two reviews at the paths `verdict.json` names in `codex.reviewFile` and `grok.reviewFile`, both of which must exist; a PR comment with PASS or BLOCK, the major count, one line per major, and the class-rule answers if BLOCK; and `stages.gate` with `round`, `majors`, `head`, `runner`, `concurrency`. The PR Gate line also states the runner: `three-wide runner: not_built; review-loop3.sh, concurrency 1` until Plan 3 lands.
 **Owner reads:** PASS or BLOCK, the major count, one sentence per major.
 **Stop:** S3, S4, S6, S7.
+
+**Retro:** every round ends with `node scripts/retro.cjs --record outcome pr=N head=<sha> round=<n> majors=<n> distinct=<n> blocked=<true|false> infra=<true|false>`. An infra round is recorded with `infra=true` and is excluded from every rate, per S4. After adjudicating, one row per finding: `node scripts/retro.cjs --record adjudication pr=N label=<major|minor|questioned> confirmed=<true|false>`, where `confirmed` means it survived contact with source. Those rows are the only thing that can ever answer whether a tier, a model, or a triage label is doing anything.
 
 **Triage:** `triage.cjs` classifies a failed run as infra before the round is counted (S4), labels and orders every finding without removing any (S8), and counts distinct ideas for S3's comparison. The gate comment prints findings in, distinct ideas, and how many triage did not read.
 
@@ -98,6 +102,8 @@ What Ship accepts from See it, exhaustively: `pass` at the current head with `fl
 **Owner reads:** the merge list page, one row per PR: claim, proof line, verdict, ticket outcome, email outcome, deploy state.
 **Stop:** S5, S6.
 
+**Retro:** after the merge, `node scripts/retro.cjs --record ship pr=N rounds=<real rounds, infra excluded> minutes=<intake to merge>`. This is the row question 5 pairs against the risk index.
+
 How, and what each step proves:
 1. `gh pr view N --json baseRefName` says `main`. Proves the base, nothing else.
 2. `gh pr merge N --squash --match-head-commit <full 40-char sha>`. Proves the branch did not move after the gate.
@@ -119,12 +125,14 @@ How: `scripts/ci/deploy-watch.cjs` (Plan 5): `/api/health`, error rate, and the 
 ## 9. Retro
 
 **Who:** Claude, weekly or after a batch.
-**Needs:** `review-loop.log` and the gate ledger.
+**Needs:** the outcome ledger at `.dstack/retro/ledger.jsonl`, written by Prove, Gate and Ship as their contracts above say. Retro reads; it never backfills a row it was not given, because a row invented after the fact is not evidence.
 **Produces:** one table: rounds per PR, time per shipped PR, infra rate, PRs handed over and why, and the log line ranges the numbers came from; and `stages.retro`.
 **Owner reads:** the table. If rounds per PR are not falling within ten PRs of adopting Plan, the Plan stage is not working and the process changes.
 **Stop:** none.
 
-How: `scripts/ci/retro.cjs` (Plan 6). Until it lands, by hand from the log, and the table says so and cites the lines.
+How: `node scripts/retro.cjs --fit` prints, per question, a finding, a "nothing worth acting on", or how many more rows it needs. Per S9 it never reports below the configured minimum and never edits a threshold: a person changes the config.
+
+Also at Retro, check the prices the whole cost ranking rests on: `node scripts/catalog.cjs --config dstack.config.json` reports any drift between the catalog and what the gateway actually charges, and `--write` applies it. Prices are facts and go stale silently; `serves` is a claim and is never touched. `--suggest --stage <stage>` ranks every model the gateway offers against that stage's real read and write shape.
 
 ## Stop rules
 
