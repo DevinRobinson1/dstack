@@ -168,7 +168,11 @@ const CATALOG = {
   unpriced:  { runner: "d", in: null, out: null, serves: ["skim", "standard", "deep", "max"] },
   $comment:  "ignored",
 };
-const R = (over) => Object.assign({ ladderOrder: ["skim", "standard", "deep", "max"], models: CATALOG }, over || {});
+// Every runner declares its kind. An undeclared kind is refused by both the
+// router and the executor now, which is the point: a catalog that does not say
+// what a runner can do cannot be reasoned about.
+const RUNNERS = { a: { kind: "text" }, b: { kind: "text" }, c: { kind: "text" }, d: { kind: "text" }, w: { kind: "text" }, i: { kind: "text" } };
+const R = (over) => Object.assign({ ladderOrder: ["skim", "standard", "deep", "max"], models: CATALOG, runners: RUNNERS }, over || {});
 
 const MODEL_CASES = [
   ["the cheapest priced model that serves the tier wins", () => {

@@ -316,13 +316,25 @@
         "kind": "text"
       },
       "codex": {
-        "kind": "agent"
+        "kind": "agent",
+        "command": "codex",
+        "args": [
+          "exec",
+          "--skip-git-repo-check"
+        ],
+        "$comment": "A bare `codex` opens an interactive CLI and waits for a TTY a piped child does not have. `codex exec` is the non-interactive entry point."
       },
       "gemini": {
-        "kind": "agent"
+        "kind": "agent",
+        "command": "gemini",
+        "args": [
+          "--prompt"
+        ]
       },
       "grok": {
-        "kind": "agent"
+        "kind": "agent",
+        "command": "grok",
+        "args": []
       }
     }
   },

@@ -7,7 +7,7 @@
 const e = require("./exec.cjs");
 
 const ROUTING = {
-  runners: { gateway: { kind: "text" }, codex: { kind: "agent" }, mystery: {} },
+  runners: { gateway: { kind: "text" }, codex: { kind: "agent", command: "codex", args: ["exec"] }, mystery: {} },
   models: {
     "ds/flash": { runner: "gateway", in: 0.13, out: 0.26 },
     codex: { runner: "codex", in: null, out: null },
@@ -55,19 +55,72 @@ const CASES = [
   ["the router and the executor answer the same question the same way", () => {
     const route = require("./route.cjs");
     const checks = [];
-    for (const stage of ["build", "gate", "plan"]) {
-      for (const id of ["ds/flash", "codex"]) {
+    // Every stage against every model, including the combinations the earlier
+    // version of this fixture skipped: an undeclared runner kind and a stage
+    // that declares no need. That pair is exactly where the two bodies
+    // disagreed while this fixture reported they agreed.
+    for (const stage of Object.keys(ROUTING.stages)) {
+      for (const id of Object.keys(ROUTING.models)) {
         const rule = Object.assign({ name: stage }, ROUTING.stages[stage]);
-        // Drift between these two is a stage routing to a model the executor
-        // then refuses, which nothing notices until someone runs it.
-        checks.push(route.runnerCanDo(ROUTING.models[id], rule, ROUTING) === can(stage, id).ok);
+        checks.push(route.runnerCanDo(Object.assign({ id }, ROUTING.models[id]), rule, ROUTING) === can(stage, id).ok);
       }
     }
     return checks;
   }],
+  ["R4a an unknown runner kind is refused by both, not allowed by one", () => {
+    const route = require("./route.cjs");
+    const rule = { name: "loose" };
+    const m = Object.assign({ id: "odd" }, ROUTING.models.odd);
+    return [route.runnerCanDo(m, rule, ROUTING) === false, can("loose", "odd").ok === false];
+  }],
+  ["R4b an agent runner is invoked non-interactively, as it declares", () => {
+    const inv = e.runnerCommand({ runner: "codex" }, ROUTING);
+    const bare = e.runnerCommand({ runner: "grok" }, ROUTING);
+    // A bare `codex` waits for a TTY a piped child does not have, so a routed
+    // build would hang instead of building.
+    return [inv.command === "codex", inv.args[0] === "exec", bare.command === "grok", Array.isArray(bare.args)];
+  }],
+  ["R4c a CLI that ignores SIGTERM is killed, and nothing resolves until it dies", async () => {
+    const start = Date.now();
+    // Guarded: without the SIGKILL escalation this never resolves at all, and
+    // a fixture that hangs tells you less than one that fails.
+    const res = await Promise.race([
+      e.cli(process.execPath, ["-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000);"], "", 300, 400),
+      new Promise((r) => setTimeout(() => r({ ok: false, hung: true }), 5000)),
+    ]);
+    const elapsed = Date.now() - start;
+    if (res.hung) return [false];
+    // The old version resolved the moment it sent SIGTERM, so Dstack started
+    // its fallback while an agent with write access was still running.
+    return [res.ok === false, res.timedOut === true, /did not finish in 300ms and was stopped/.test(res.reason), elapsed >= 600];
+  }],
+  ["R4d a CLI that exits cleanly is read as success", async () => {
+    const res = await e.cli(process.execPath, ["-e", "process.stdout.write('done')"], "", 5000);
+    const bad = await e.cli(process.execPath, ["-e", "process.stderr.write('boom'); process.exit(3)"], "", 5000);
+    return [res.ok === true, res.text === "done", bad.ok === false, /exited 3/.test(bad.reason)];
+  }],
+  ["R4e a command that does not exist fails rather than hanging", async () => {
+    const res = await e.cli("definitely-not-a-real-command-xyz", [], "", 5000);
+    return [res.ok === false, /could not start/.test(res.reason)];
+  }],
   ["a refusal is a state with a fallback, never a crash", async () => {
     const res = await e.run({ stage: "build", model: "ds/flash" }, { prompt: "x" }, { routing: ROUTING }, {});
     return [res.ok === false, res.refused === true, typeof res.fallback === "string", /needs agent/.test(res.reason)];
+  }],
+  ["R4f a completion that stopped early is a failure, not a short answer", () => {
+    const cut = e.readCompletion({ choices: [{ message: { content: "half a review" }, finish_reason: "length" }] }, "m");
+    const filt = e.readCompletion({ choices: [{ message: { content: "" }, finish_reason: "content_filter" }] }, "m");
+    const whole = e.readCompletion({ choices: [{ message: { content: "a whole review" }, finish_reason: "stop" }] }, "m");
+    const none = e.readCompletion({ choices: [] }, "m");
+    const legacy = e.readCompletion({ choices: [{ message: { content: "ok" } }] }, "m");
+    return [
+      // Half a gate review that looks whole is worse than no review.
+      cut.ok === false, /stopped early \(length\)/.test(cut.reason), cut.partial === "half a review",
+      filt.ok === false, whole.ok === true, whole.text === "a whole review",
+      none.ok === false, /no message/.test(none.reason),
+      // A provider that omits finish_reason entirely is not thereby truncated.
+      legacy.ok === true,
+    ];
   }],
   ["cost is estimated from real usage, and absent when the model is unpriced", () => {
     return [e.estimate({ in: 0.13, out: 0.26 }, { prompt_tokens: 1000000, completion_tokens: 0 }) === 0.13,
