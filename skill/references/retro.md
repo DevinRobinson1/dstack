@@ -4,6 +4,14 @@ Every number in this process is a guess. Five routing weights, four bands, eight
 
 Nothing observed any of them. A change routed to `skim` and a change routed to `max` produced exactly the same record: none.
 
+## What this has and has not demonstrated
+
+Every rule below is held by a fixture and was seen to fail when mutated. None of it has run in a real delivery cycle.
+
+Thirteen of the twenty findings across five review rounds were here, and three of them were the same thing in different clothes: the ledger could not answer its own questions. No writer at all. Then rows that could not join. Then Build decisions dropped, because Build routes before Prove commits and collection filtered on the later head. Each time the report read "not enough evidence yet", which is indistinguishable from a young and healthy ledger.
+
+So: record from today, because rows only accumulate if collection is on and there is no evidence without them. Do not act on `--fit` until one real cycle has written rows through it end to end, and the first thing to check then is whether every stage that should have produced a row actually did.
+
 ## The refusal
 
 **A finding that does not carry its sample count is not a finding.**

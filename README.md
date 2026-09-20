@@ -91,6 +91,22 @@ The expected first run is every line reading "not enough evidence yet, this need
 
 Two things it does not do. It never edits a threshold: it reports, and a person changes the config, because a process that tunes its own safety thresholds from its own small sample will talk itself into anything. And it is **not a significance test**, which `skill/references/retro.md` says in those words. It is rates and differences with sample counts beside them, a tripwire rather than a study.
 
+## What has run, and what has only been reviewed
+
+Worth separating, because five rounds of adversarial review made the difference plain. Twenty findings landed like this:
+
+| | Findings | Has it run? |
+|---|---|---|
+| Routing | 0 | yes, live against the gateway |
+| Exec | 7 | yes, live twice |
+| Retro | 13 | **no** |
+
+Routing and Exec have measured and executed real changes. Retro has not. Its ledger failed to answer its own five questions in three separate ways, and every time the symptom was identical: the report said "not enough evidence yet", which is exactly what a healthy young ledger prints. Review caught all three; nothing else could have.
+
+So Retro ships **recording but not trusted**. Its collection is append-only and harmless, and rows should accumulate from today so that evidence exists when it is time to believe it. Its `--fit` output should not be acted on until one real delivery cycle has written rows through it end to end. The same caution applies to Triage, which is built and reviewed and has likewise never run in a real gate.
+
+That distinction is the point of this whole repository, turned on itself: proven by fixtures and proven in use are different claims, and only one of them was earned here.
+
 ## Status
 
 Under construction, in the open. Plan 1 (the skill shell) is written, reviewed across three adversarial rounds, and dry-run proven. Plans 2 through 6 are not written yet.
@@ -102,9 +118,10 @@ Under construction, in the open. Plan 1 (the skill shell) is written, reviewed a
 | 3 | Parallel gate runner with infrastructure retry | Not started |
 | 4 | See it: real browser evidence | Not started |
 | 5 | Watch: deploy observation | Not started |
-| 6 | Retro: the ledger that corrects the guesses | Built, proven, ungated |
-| 7 | Jev routing: measured tiers, model catalog, and the end of proxy heuristics | Built, proven, ungated |
-| 8 | Triage: infra verdicts, finding ranking, distinct-idea progress | Built, proven, ungated |
+| 6 | Retro: the ledger that corrects the guesses | Built and reviewed, **not yet exercised** |
+| 7 | Jev routing: measured tiers, model catalog, and the end of proxy heuristics | Built, reviewed, run live |
+| 8 | Triage: infra verdicts, finding ranking, distinct-idea progress | Built and reviewed, **not yet exercised** |
+| 9 | Exec: run the model the router picks, refuse what cannot do the work | Built, reviewed, run live |
 
 Plans and their full review logs live in [docs/plans](docs/plans). The argument is the artifact; it is kept whole on purpose.
 
