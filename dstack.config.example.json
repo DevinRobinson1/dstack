@@ -322,19 +322,23 @@
           "exec",
           "--skip-git-repo-check"
         ],
-        "$comment": "A bare `codex` opens an interactive CLI and waits for a TTY a piped child does not have. `codex exec` is the non-interactive entry point."
+        "$comment": "A bare `codex` opens an interactive CLI and waits for a TTY a piped child does not have. `codex exec` is the non-interactive entry point.",
+        "promptVia": "stdin"
       },
       "gemini": {
         "kind": "agent",
         "command": "gemini",
         "args": [
-          "--prompt"
-        ]
+          "-p"
+        ],
+        "promptVia": "arg",
+        "$comment": "gemini -p takes the prompt as a string argument, so passing the flag with the prompt on stdin invokes it with a missing option value and it fails before doing any work."
       },
       "grok": {
         "kind": "agent",
         "command": "grok",
-        "args": []
+        "args": [],
+        "promptVia": "stdin"
       }
     }
   },

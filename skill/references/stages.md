@@ -55,7 +55,9 @@ How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_C
 **Owner reads:** "6 guarantees, 6 seen to fail, on <short sha>, proof command green." If it is 5 of 6, the ledger names the sixth and why, and the Claim no longer promises it.
 **Stop:** S2.
 
-**Retro:** after the PR exists, `node scripts/retro.cjs --collect --pr N --head <full sha>` reads the routing artifacts, matching each on the head it carries rather than on its filename, and appends one `retro.cjs --record decision` row and one `retro.cjs --record usage` row per routed stage. These are what questions 1, 2 and 4 are computed from, and they are free: the router already wrote them.
+**Retro:** after the PR exists, `node scripts/retro.cjs --collect --pr N` reads the routing artifacts and appends one `retro.cjs --record decision` row and one `retro.cjs --record usage` row per routed stage. Each row carries the head from its own artifact. It is deliberately not filtered by a head given here: Build routes against the pre-build commit and Prove collects after committing, so filtering on the collecting head dropped every Build decision and silently emptied the two questions that judge a tier and a model. A stale artifact keeps its own head and joins to no outcome of this PR.
+
+A usage row says whose tokens it counted. The router's measurement and the chosen runner's work are both in the artifact, and only the runner's describes the stage: recording the router's made question 4 answer about Jev.
 
 How:
 - Read the full diff against the plan. Anything outside the plan's Change section is a deviation and is named in the PR body.

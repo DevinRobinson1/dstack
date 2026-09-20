@@ -7,11 +7,13 @@
 const e = require("./exec.cjs");
 
 const ROUTING = {
-  runners: { gateway: { kind: "text" }, codex: { kind: "agent", command: "codex", args: ["exec"] }, mystery: {} },
+  runners: { gateway: { kind: "text" }, codex: { kind: "agent", command: "codex", args: ["exec"] },
+             gem: { kind: "agent", command: "gem", args: ["-p"], promptVia: "arg" }, mystery: {} },
   models: {
     "ds/flash": { runner: "gateway", in: 0.13, out: 0.26 },
     codex: { runner: "codex", in: null, out: null },
     odd: { runner: "mystery", in: 1, out: 1 },
+    "g/1": { runner: "gem", in: 1, out: 1 },
     orphan: { runner: "nowhere", in: 1, out: 1 },
   },
   stages: {
@@ -107,19 +109,34 @@ const CASES = [
     const res = await e.run({ stage: "build", model: "ds/flash" }, { prompt: "x" }, { routing: ROUTING }, {});
     return [res.ok === false, res.refused === true, typeof res.fallback === "string", /needs agent/.test(res.reason)];
   }],
+  ["R5a a response with no stop reason is unproven, not complete", () => {
+    const none = e.readCompletion({ choices: [{ message: { content: "partial" } }] }, "m");
+    const nulled = e.readCompletion({ choices: [{ message: { content: "partial" }, finish_reason: null }] }, "m");
+    // The previous fixture blessed an absent reason as "legacy", which
+    // contradicted the rule it was written to enforce: the caller still cannot
+    // tell a finished judgement from half of one.
+    return [none.ok === false, /returned no stop reason/.test(none.reason), none.partial === "partial",
+            nulled.ok === false, /completion is unproven/.test(nulled.reason)];
+  }],
+  ["R5b a runner that wants the prompt as an argument gets it there", () => {
+    const viaArg = e.runnerCommand({ runner: "gem" }, ROUTING);
+    const viaStdin = e.runnerCommand({ runner: "codex" }, ROUTING);
+    return [viaArg.promptVia === "arg", viaArg.args[0] === "-p",
+            // Defaulting to stdin is right for codex and wrong for gemini,
+            // whose -p takes the prompt as a string.
+            viaStdin.promptVia === "stdin"];
+  }],
   ["R4f a completion that stopped early is a failure, not a short answer", () => {
     const cut = e.readCompletion({ choices: [{ message: { content: "half a review" }, finish_reason: "length" }] }, "m");
     const filt = e.readCompletion({ choices: [{ message: { content: "" }, finish_reason: "content_filter" }] }, "m");
     const whole = e.readCompletion({ choices: [{ message: { content: "a whole review" }, finish_reason: "stop" }] }, "m");
     const none = e.readCompletion({ choices: [] }, "m");
-    const legacy = e.readCompletion({ choices: [{ message: { content: "ok" } }] }, "m");
+
     return [
       // Half a gate review that looks whole is worse than no review.
       cut.ok === false, /stopped early \(length\)/.test(cut.reason), cut.partial === "half a review",
       filt.ok === false, whole.ok === true, whole.text === "a whole review",
       none.ok === false, /no message/.test(none.reason),
-      // A provider that omits finish_reason entirely is not thereby truncated.
-      legacy.ok === true,
     ];
   }],
   ["cost is estimated from real usage, and absent when the model is unpriced", () => {

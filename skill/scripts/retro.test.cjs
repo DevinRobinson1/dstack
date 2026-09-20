@@ -122,8 +122,30 @@ const CASES = [
     const rs = [{ t: "decision", pr: 9, head: "h9", stage: "build", tier: "deep", model: "m" }];
     return [r.joinOutcomes(rs).length === 0];
   }],
+  ["R5c question 4 counts the runner's tokens, never the router's", () => {
+    const rows = [];
+    for (let i = 0; i < 20; i++) {
+      // Both spends are real and both are in the ledger. Only one describes
+      // the stage: the router's few hundred tokens are what Jev spent
+      // measuring the change, and counting those made question 4 answer about
+      // Jev while looking like an answer about the stage.
+      rows.push({ t: "usage", pr: i, stage: "build", source: "router", in: 400, out: 70 });
+      rows.push({ t: "usage", pr: i, stage: "build", source: "runner", in: 61000, out: 20500 });
+    }
+    const s = r.fit(rows, CONFIG).shapes.find((x) => x.stage === "build");
+    return [s.enough === true, s.measured.in === 61000, s.measured.out === 20500,
+            s.finding === false, !/400/.test(s.why)];
+  }],
+  ["R5d a usage row must say whose tokens it counted", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
+    const f = path.join(d, "l.jsonl");
+    const noSource = r.record({ t: "usage", stage: "build", in: 100, out: 50 }, { file: f });
+    const ok = r.record({ t: "usage", stage: "build", source: "runner", in: 100, out: 50 }, { file: f });
+    fs.rmSync(d, { recursive: true, force: true });
+    return [noSource.ok === false, /source \(missing\)/.test(noSource.reason), ok.ok === true];
+  }],
   ["a drifted token shape is reported against what the config claims", () => {
-    const usage = Array.from({ length: 20 }, (_, i) => ({ t: "usage", pr: i, stage: "build", in: 120000, out: 40000 }));
+    const usage = Array.from({ length: 20 }, (_, i) => ({ t: "usage", pr: i, stage: "build", source: "runner", in: 120000, out: 40000 }));
     const res = r.fit(usage, CONFIG);
     const s = res.shapes.find((x) => x.stage === "build");
     return [s.enough === true, s.finding === true, s.measured.in === 120000, s.declared.in === 60000, /configured 60000\/20000, measured 120000\/40000/.test(s.why)];
@@ -134,7 +156,7 @@ const CASES = [
       stage: "gate", head: "abc", tier: "max", model: "m", risk: 2.3, cost: 0.5,
       usage: { input_tokens: 984, output_tokens: 157 },
     }));
-    const rows = r.collectDecisions(d, "abc");
+    const rows = r.collectDecisions(d);
     fs.rmSync(d, { recursive: true, force: true });
     const usage = rows.find((x) => x.t === "usage");
     // Question 4 asks whether the configured shape matches reality. Taking it
@@ -144,7 +166,7 @@ const CASES = [
   ["a routing artifact with no usage block yields a decision and no usage row", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     fs.writeFileSync(path.join(d, "plan-abc.json"), JSON.stringify({ stage: "plan", head: "abc", tier: "deep", model: "m" }));
-    const rows = r.collectDecisions(d, "abc");
+    const rows = r.collectDecisions(d);
     fs.rmSync(d, { recursive: true, force: true });
     return [rows.length === 1, rows[0].t === "decision"];
   }],
@@ -202,19 +224,24 @@ const CASES = [
   ["C4 a field may not overwrite the row type", () => {
     return [r.RESERVED_KEYS.has("t"), r.ROW_SCHEMA.outcome.required.head === "string", r.ROW_SCHEMA.outcome.required.blocked === "boolean"];
   }],
-  ["C5 collect takes only artifacts about the head being collected", () => {
+  ["C5 every collected row carries its artifact's own head, not one supplied later", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "retro-"));
     fs.writeFileSync(path.join(d, "build-aaaaaaa.json"), JSON.stringify({ stage: "build", head: "aaaaaaa1234", tier: "deep", model: "m" }));
     fs.writeFileSync(path.join(d, "gate-bbbbbbb.json"), JSON.stringify({ stage: "gate", head: "bbbbbbb9999", tier: "max", model: "m" }));
-    const mine = r.collectDecisions(d, "aaaaaaa1234");
-    const noHead = r.collectDecisions(d, null);
-    // Another PR's artifact recorded as this PR's would join to this PR's
-    // outcome and report a result about work that never happened.
-    // An empty head is the dangerous one: "".includes(x) is true for every
-    // filename, so without the guard this collects the whole directory.
-    const emptyHead = r.collectDecisions(d, "");
+    fs.writeFileSync(path.join(d, "plan-nohead.json"), JSON.stringify({ stage: "plan", tier: "deep", model: "m" }));
+    const all = r.collectDecisions(d);
     fs.rmSync(d, { recursive: true, force: true });
-    return [mine.length === 1, mine[0].stage === "build", noHead.length === 0, emptyHead.length === 0];
+    // Build routes before Prove commits, so filtering on the head supplied at
+    // collection time dropped every Build decision and silently emptied the
+    // two questions that judge a tier and a model. Each row carrying its own
+    // head is both correct and safe: a stale artifact keeps its old head and
+    // joins to no outcome of this PR rather than being mis-attributed.
+    const build = all.find((x) => x.stage === "build");
+    const gate = all.find((x) => x.stage === "gate");
+    return [all.length === 2, build.head === "aaaaaaa1234", gate.head === "bbbbbbb9999",
+            all.every((x) => typeof x.head === "string" && x.head.length > 0),
+            // No provenance means no row, rather than a guessed one.
+            !all.some((x) => x.stage === "plan")];
   }],
   ["every row type declares required fields, so the class cannot return renamed", () => {
     return [...r.TYPES].map((t) => { const req = r.ROW_SCHEMA[t].required; return req && typeof req === "object" && Object.keys(req).length > 0 && Object.values(req).every((v) => ["string","number","boolean"].includes(v)); });
@@ -236,7 +263,7 @@ const CASES = [
     const noResult = r.record({ t: "outcome", pr: 12, head: "abc" }, { file: f });
     const wrongType = r.record({ t: "outcome", pr: 12, head: "abc", blocked: "yes", infra: false }, { file: f });
     const noConfirm = r.record({ t: "adjudication", pr: 12, label: "major" }, { file: f });
-    const noTokens = r.record({ t: "usage", stage: "build" }, { file: f });
+    const noTokens = r.record({ t: "usage", stage: "build", source: "runner" }, { file: f });
     const ok = r.record({ t: "outcome", pr: 12, head: "abc", blocked: false, infra: false }, { file: f });
     fs.rmSync(d, { recursive: true, force: true });
     return [noResult.ok === false, /blocked \(missing\)/.test(noResult.reason),
@@ -249,10 +276,14 @@ const CASES = [
     fs.writeFileSync(path.join(d, "gate-abcdef0.json"), JSON.stringify({ stage: "gate", head: "abcdef011111", tier: "max", model: "old" }));
     fs.writeFileSync(path.join(d, "build-abcdef0.json"), JSON.stringify({ stage: "build", head: "abcdef022222", tier: "deep", model: "mine" }));
     fs.writeFileSync(path.join(d, "plan-noheadx.json"), JSON.stringify({ stage: "plan", tier: "deep", model: "legacy" }));
-    const got = r.collectDecisions(d, "abcdef022222");
+    const got = r.collectDecisions(d);
     fs.rmSync(d, { recursive: true, force: true });
-    return [got.length === 1, got[0].model === "mine", got[0].head === "abcdef022222",
-            // An artifact with no head is skipped rather than guessed at.
+    // Two heads sharing a seven character prefix stay distinct because each row
+    // carries the full head from its own artifact, never from the filename.
+    const mine = got.find((x) => x.model === "mine");
+    const old = got.find((x) => x.model === "old");
+    return [got.length === 2, mine.head === "abcdef022222", old.head === "abcdef011111",
+            // An artifact with no head has no provenance and is skipped.
             got.every((x) => x.model !== "legacy")];
   }],
   ["T1 the cohort minimum rounds up, so a cohort under the rule is refused", () => {

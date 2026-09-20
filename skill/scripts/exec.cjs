@@ -42,7 +42,15 @@ function runnerKind(model, routing) {
 // hang rather than build. The runner declares its command line.
 function runnerCommand(model, routing) {
   const declared = ((routing && routing.runners) || {})[model && model.runner] || {};
-  return { command: declared.command || (model && model.runner), args: Array.isArray(declared.args) ? declared.args.slice() : [] };
+  return {
+    command: declared.command || (model && model.runner),
+    args: Array.isArray(declared.args) ? declared.args.slice() : [],
+    // Some CLIs take the prompt as an argument and some read stdin. Gemini's
+    // -p is documented as taking a string, so passing the flag with the prompt
+    // on stdin invokes it with a missing option value and it fails before
+    // doing any work. A runner declares which it wants.
+    promptVia: declared.promptVia === "arg" ? "arg" : "stdin",
+  };
 }
 
 // THE predicate. One body, and both public entry points call it, so they
@@ -89,8 +97,14 @@ function readCompletion(d, model) {
   const choice = d && d.choices && d.choices[0];
   if (!choice || !choice.message) return { ok: false, reason: "the gateway returned no message" };
   const fin = choice.finish_reason;
-  if (fin && fin !== "stop" && fin !== "end_turn") {
-    return { ok: false, reason: `${model} stopped early (${fin}), so its answer is partial and cannot be read as complete`, partial: choice.message.content || "" };
+  // No stop reason is not a natural stop, it is an unproven one. The earlier
+  // version blessed absence as "legacy", which contradicted the rule it was
+  // written to enforce: the caller still cannot tell a finished judgement from
+  // half of one. Every gateway provider returns this field, so absence is
+  // anomalous and says so loudly rather than passing quietly.
+  if (fin !== "stop" && fin !== "end_turn") {
+    const why = fin ? `stopped early (${fin})` : "returned no stop reason, so completion is unproven";
+    return { ok: false, reason: `${model} ${why}, so its answer cannot be read as complete`, partial: choice.message.content || "" };
   }
   return { ok: true, text: choice.message.content, usage: d.usage || null, model: d.model || model };
 }
@@ -139,7 +153,15 @@ function cli(command, args, input, timeoutMs, graceMs) {
     // Signal the whole group: an agent that spawned children leaves them
     // editing when only the parent is asked to stop.
     const signal = (sig) => {
-      try { if (detach && p.pid) process.kill(-p.pid, sig); else p.kill(sig); }
+      // POSIX: signal the group, so an agent's children stop too. Windows has
+      // no process group to signal, and p.kill() reaches only the parent while
+      // a grandchild writer keeps editing, so the tree is killed by taskkill.
+      if (!detach) {
+        try { spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { stdio: "ignore" }); }
+        catch { try { p.kill(sig); } catch { /* already gone */ } }
+        return;
+      }
+      try { if (p.pid) process.kill(-p.pid, sig); else p.kill(sig); }
       catch { try { p.kill(sig); } catch { /* already gone */ } }
     };
     let killer = null;
@@ -183,14 +205,16 @@ async function run(decision, task, config, opts) {
       { role: "system", content: task.system || "You are reviewing software changes. Be concrete and brief." },
       { role: "user", content: task.prompt },
     ], key, (opts && opts.timeoutMs) || 120000, task.maxTokens);
-    if (!res.ok) return { ok: false, reason: `${decision.model} did not answer (${res.status}): ${res.reason}` };
+    if (!res.ok) return { ok: false, reason: `${decision.model} did not answer (${res.status}): ${res.reason}`, partial: res.partial };
     return { ok: true, kind: "text", model: res.model, text: res.text, usage: res.usage,
-             cost: estimate(model, res.usage) };
+             usageSource: "runner", cost: estimate(model, res.usage) };
   }
 
   const invoke = runnerCommand(model, routing);
   const argv = invoke.args.concat(task.args || []);
-  const res = await cli(invoke.command, argv, task.prompt, (opts && opts.timeoutMs) || 600000, (opts && opts.graceMs) || 10000);
+  const viaArg = invoke.promptVia === "arg";
+  if (viaArg) argv.push(task.prompt);
+  const res = await cli(invoke.command, argv, viaArg ? "" : task.prompt, (opts && opts.timeoutMs) || 600000, (opts && opts.graceMs) || 10000);
   return res.ok
     ? { ok: true, kind: "agent", model: decision.model, text: res.text, usage: null, cost: null }
     : { ok: false, reason: res.reason, text: res.text };
@@ -222,6 +246,19 @@ async function main() {
   const res = await run(decision, { prompt, system: arg("system", null) }, config, {});
   if (res.refused) { console.error(`Dstack exec refused: ${res.reason}. This stage falls back to ${res.fallback}.`); process.exit(3); }
   if (!res.ok) { console.error(`Dstack exec failed: ${res.reason}`); process.exit(1); }
+  // Write what the runner actually spent back into the artifact. Without this
+  // Retro reads the router's measurement tokens as the stage's shape: a few
+  // hundred where the reviewer spent eighty thousand, which makes question 4
+  // answer about Jev rather than about the stage.
+  if (res.usage) {
+    try {
+      const d = JSON.parse(fs.readFileSync(decisionFile, "utf8"));
+      d.runner_usage = { input_tokens: res.usage.prompt_tokens || res.usage.input_tokens || 0,
+                         output_tokens: res.usage.completion_tokens || res.usage.output_tokens || 0 };
+      d.runner_cost = res.cost;
+      fs.writeFileSync(decisionFile, JSON.stringify(d, null, 2) + "\n");
+    } catch { /* the artifact may be read only; the run still counts */ }
+  }
   const out = arg("out");
   if (out) fs.writeFileSync(out, res.text);
   console.error(`ran ${res.model} as ${res.kind}${res.cost != null ? `, about $${res.cost}` : ""}`);

@@ -46,7 +46,7 @@ const ROW_SCHEMA = {
   // round is not a round; a row that never says whether it was one is read as
   // a real round, so a network timeout counts against the change under review.
   outcome:      { required: { pr: "number", head: "string", blocked: "boolean", infra: "boolean" } },
-  usage:        { required: { stage: "string", in: "number", out: "number" } },
+  usage:        { required: { stage: "string", source: "string", in: "number", out: "number" } },
   adjudication: { required: { pr: "number", label: "string", confirmed: "boolean" } },
   ship:         { required: { pr: "number", rounds: "number" } },
 };
@@ -195,7 +195,10 @@ function fit(rows, config) {
     byKey(adj, (r) => r.label), mins, (rs) => rate(rs, (r) => r.confirmed === true)));
 
   // 4. Are the token shapes right? These decide the cost ranking and were guessed.
-  const usage = rows.filter((r) => r.t === "usage");
+  // Only the runner's spend describes the stage. A router row is kept in the
+  // ledger because it is real and cheap to have, and excluded here because it
+  // would answer a different question while looking like an answer to this one.
+  const usage = rows.filter((r) => r.t === "usage" && r.source !== "router");
   const shapes = [];
   for (const [stage, rs] of Object.entries(byKey(usage, (r) => r.stage))) {
     const declared = ((config && config.routing && config.routing.stages) || {})[stage];
@@ -276,27 +279,39 @@ function fit(rows, config) {
 function collectDecisions(dir, head) {
   let names = [];
   try { names = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && !n.startsWith("state-")); } catch { return []; }
-  if (!head) return [];
+
 
   const out = [];
   for (const n of names) {
     let d;
     try { d = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8")); } catch { continue; }
     if (!d || !d.stage) continue;
-    // Provenance is carried, never inferred. A filename gives seven characters
-    // and a head is forty; two commits share a seven character prefix often
-    // enough that an old PR's artifact would be attributed to this one, join
-    // to this one's outcome, and report on work that never happened. An
-    // artifact with no head is skipped rather than guessed at.
-    if (d.head !== head) continue;
-    out.push({ t: "decision", head: d.head, stage: d.stage, tier: d.tier || null, model: d.model || null, risk: d.risk,
+    // Provenance is carried, never inferred, and it is the artifact's own head
+    // rather than one supplied at collection time. Build routes against the
+    // pre-build commit and Prove collects after committing, so filtering on the
+    // collecting head dropped every Build decision and silently emptied the two
+    // questions that judge a tier and a model.
+    //
+    // Carrying each artifact's own head is safe for the reason the filter
+    // existed: a stale artifact from another PR keeps its own head, joins to no
+    // outcome of this one, and is excluded from every rate rather than
+    // mis-attributed.
+    if (!d.head) continue;
+    out.push({ t: "decision", head: String(d.head), stage: d.stage, tier: d.tier || null, model: d.model || null, risk: d.risk,
                confidence: d.confidence, surface: d.surface || null, routed: !!d.routed, escalated: !!d.escalated,
                floor: d.floorApplied || null, est_cost: d.cost == null ? null : d.cost });
     // The artifact already carries what the router actually spent. Question 4
     // asks whether the configured shapes match reality, so take it from here
     // rather than asking a stage to report a number it would have to guess.
+    // Two different spends live in one artifact: what the router spent
+    // measuring the change, and what the chosen runner spent doing the work.
+    // Question 4 asks about the stage's shape, which is the second. Recording
+    // the first made it answer about Jev.
+    if (d.runner_usage && (d.runner_usage.input_tokens != null || d.runner_usage.output_tokens != null)) {
+      out.push({ t: "usage", stage: d.stage, source: "runner", in: d.runner_usage.input_tokens || 0, out: d.runner_usage.output_tokens || 0 });
+    }
     if (d.usage && (d.usage.input_tokens != null || d.usage.output_tokens != null)) {
-      out.push({ t: "usage", stage: d.stage, in: d.usage.input_tokens || 0, out: d.usage.output_tokens || 0 });
+      out.push({ t: "usage", stage: d.stage, source: "router", in: d.usage.input_tokens || 0, out: d.usage.output_tokens || 0 });
     }
   }
   return out;
@@ -378,13 +393,13 @@ function main() {
   }
 
   if (has("collect")) {
-    const head = arg("head", null);
-    if (!head) { console.error("Retro cannot collect without --head: the routing directory holds artifacts from other PRs, and stamping them with this one records decisions about work that never happened."); process.exit(2); }
-    const decisions = collectDecisions(arg("routing-dir", ".dstack/routing"), head);
+    const decisions = collectDecisions(arg("routing-dir", ".dstack/routing"));
+    const heads = [...new Set(decisions.map((d) => d.head).filter(Boolean))];
     const pr = Number(arg("pr", 0)) || null;
     let n = 0;
     for (const d of decisions) { if (record(Object.assign({ at: arg("at", ""), pr, head }, d), { file, enabled: (config.retro || {}).enabled }).ok) n++; }
-    console.log(`Collected ${n} decision row(s) into ${file}.`);
+    console.log(`Collected ${n} row(s) into ${file}, across ${heads.length} commit(s): ${heads.map((h) => String(h).slice(0, 7)).join(", ")}.`);
+    console.log("Each row carries the commit its artifact was about. A stale artifact keeps its own head and joins to nothing.");
     process.exit(0);
   }
 
