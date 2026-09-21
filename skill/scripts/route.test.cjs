@@ -298,6 +298,22 @@ const CLIENT_CASES = [
     const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider: "openrouter" });
     return [res.ok === false, /not one jev.cjs serves|unknown routing provider/.test(res.reason)];
   }],
+  ["a text runner's credential is its own, not the measuring model's", () => {
+    const exec = require("./exec.cjs");
+    const routing = {
+      provider: "typesafe", apiKeyEnv: "MEASURING_KEY",
+      runners: { gw: { kind: "text", apiKeyEnv: "RUNNER_KEY" }, bare: { kind: "text" } },
+      models: { a: { runner: "gw" }, b: { runner: "bare" } },
+      stages: { plan: { needs: ["text"] } },
+    };
+    // Jev and the catalog models shared one gateway, so one key served both.
+    // Once Jev moved to its own API, reusing routing.apiKeyEnv here sent a
+    // TypeSafe key to Vercel: a 401 from a config that read as consistent.
+    const own = (routing.runners.gw.apiKeyEnv) || routing.apiKeyEnv;
+    const inherited = (routing.runners.bare.apiKeyEnv) || routing.apiKeyEnv;
+    return [own === "RUNNER_KEY", inherited === "MEASURING_KEY",
+            exec.runnerCanDo(routing.models.a, routing.stages.plan, routing) === true];
+  }],
   ["the typesafe provider builds and parses its own wire format", () => {
     const built = jev.PROVIDERS.typesafe.build("s", { q: { type: "noul", instructions: "?" } }, { model: "jev-latest" }, "k");
     // TypeSafe direct takes the model in the body and keeps `noul` as `noul`.

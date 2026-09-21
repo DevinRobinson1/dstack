@@ -198,9 +198,17 @@ async function run(decision, task, config, opts) {
 
   const model = routing.models[decision.model];
   if (gate.kind === "text") {
-    const envName = routing.apiKeyEnv || "AI_GATEWAY_API_KEY";
-    const key = jev.readKey(envName, routing.apiKeyFile);
-    if (!key) return { ok: false, reason: `no ${envName} in the environment${routing.apiKeyFile ? ` or in ${routing.apiKeyFile}` : ""}` };
+    // The credential belongs to the RUNNER, not to the routing block. Those
+    // were the same thing only while Jev and the catalog models shared one
+    // gateway. Once Jev moved to its own API, routing.apiKeyEnv meant the Jev
+    // key, and reusing it here sent a TypeSafe key to the Vercel gateway: a
+    // 401 at the stage, from a config that looked entirely consistent.
+    const declared = (routing.runners || {})[model.runner] || {};
+    const envName = declared.apiKeyEnv || routing.apiKeyEnv || "AI_GATEWAY_API_KEY";
+    const key = jev.readKey(envName, declared.apiKeyFile || routing.apiKeyFile);
+    if (!key) {
+      return { ok: false, reason: `no ${envName} in the environment${routing.apiKeyFile ? ` or in ${routing.apiKeyFile}` : ""}, which is what runner "${model.runner}" needs` };
+    }
     const res = await chat(decision.model, [
       { role: "system", content: task.system || "You are reviewing software changes. Be concrete and brief." },
       { role: "user", content: task.prompt },

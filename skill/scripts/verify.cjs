@@ -292,6 +292,30 @@ if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not poin
   } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
 })();
 
+// A runner that reaches a paid service needs a credential named somewhere, and
+// the routing block's key is the measuring model's, not the runner's. Those
+// were the same key only while both went through one gateway; silently reusing
+// it is a 401 at the stage from a config that reads as consistent.
+(function runnerCredentials() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
+  const r = cfg.routing || {};
+  const used = new Set(Object.entries(r.models || {})
+    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && m.runner)
+    .map(([, m]) => m.runner));
+  for (const runner of used) {
+    const declared = (r.runners || {})[runner] || {};
+    if (declared.kind !== "text") continue;
+    const named = declared.apiKeyEnv || r.apiKeyEnv;
+    if (!named) problems.push(`routing: runner "${runner}" is a text runner with no apiKeyEnv, so nothing says which credential reaches it`);
+    if (r.provider && r.provider !== "vercel" && !declared.apiKeyEnv) {
+      problems.push(`routing: the measuring provider is "${r.provider}" but text runner "${runner}" has no apiKeyEnv of its own, so it would inherit the measuring model's key and fail against a different service`);
+    }
+  }
+})();
+
 // A routing invocation without --head writes an artifact Retro cannot
 // attribute, so the decision is silently dropped from every rate.
 for (const m of (read("references/stages.md").match(/route\.cjs --stage \w+[^`]*/g) || [])) {
