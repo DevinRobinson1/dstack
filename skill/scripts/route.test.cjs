@@ -298,6 +298,49 @@ const CLIENT_CASES = [
     const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider: "openrouter" });
     return [res.ok === false, /not one jev.cjs serves|unknown routing provider/.test(res.reason)];
   }],
+  ["the typesafe provider builds and parses its own wire format", () => {
+    const built = jev.PROVIDERS.typesafe.build("s", { q: { type: "noul", instructions: "?" } }, { model: "jev-latest" }, "k");
+    // TypeSafe direct takes the model in the body and keeps `noul` as `noul`.
+    // The gateway takes it in a header and calls the same thing `boolean`.
+    const parsed = jev.PROVIDERS.typesafe.parse({
+      model: "jev-1.13.0",
+      answers: {
+        a: { type: "noul", noul: 0.99 },
+        b: { type: "score", score: 2.94, confidence: 0.94, legend: { 0: "", 1: "", 2: "", 3: "" }, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } },
+      },
+      usage: { input_tokens: 414, output_tokens: 71 },
+    });
+    const b = jev.reading(parsed.answers.b);
+    return [
+      built.body.model === "jev-latest", built.body.questions.q.type === "noul",
+      built.headers.Authorization === "Bearer k",
+      built.headers["ai-model-id"] === undefined,
+      // Confidence is ON the answer here, and on providerMetadata at the
+      // gateway. Reading it from the wrong place normalizes to 0, which reads
+      // as total uncertainty and escalates every decision forever.
+      b.confidence === 0.94, b.raw === 2.94, b.top === 3,
+      parsed.usage.input_tokens === 414, parsed.model === "jev-1.13.0",
+      parsed.cost === null,
+    ];
+  }],
+  ["both providers normalize into one shape, so callers cannot tell them apart", () => {
+    const gw = jev.PROVIDERS.vercel.parse({
+      answers: { a: { type: "boolean", probability: 0.99 }, b: { type: "score", score: 2.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
+      usage: { inputTokens: 414, outputTokens: 71 },
+      providerMetadata: { typesafe: { confidence: { b: 0.94 } } },
+    });
+    const ts = jev.PROVIDERS.typesafe.parse({
+      answers: { a: { type: "noul", noul: 0.99 }, b: { type: "score", score: 2.94, confidence: 0.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
+      usage: { input_tokens: 414, output_tokens: 71 },
+    });
+    const ra = [jev.reading(gw.answers.a), jev.reading(ts.answers.a)];
+    const rb = [jev.reading(gw.answers.b), jev.reading(ts.answers.b)];
+    // The whole point of normalizing: switching providers must not change a
+    // single routing decision, and nothing downstream should need to know.
+    return [ra[0].value === ra[1].value, ra[0].confidence === ra[1].confidence,
+            rb[0].value === rb[1].value, rb[0].confidence === rb[1].confidence,
+            gw.usage.input_tokens === ts.usage.input_tokens];
+  }],
   ["the gateway's boolean becomes a noul, and its confidence is found", () => {
     const parsed = jev.PROVIDERS.vercel.parse({
       answers: { a: { type: "boolean", probability: 0.99 }, b: { type: "score", score: 2.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
