@@ -309,10 +309,18 @@ const CLIENT_CASES = [
     // Jev and the catalog models shared one gateway, so one key served both.
     // Once Jev moved to its own API, reusing routing.apiKeyEnv here sent a
     // TypeSafe key to Vercel: a 401 from a config that read as consistent.
-    const own = (routing.runners.gw.apiKeyEnv) || routing.apiKeyEnv;
-    const inherited = (routing.runners.bare.apiKeyEnv) || routing.apiKeyEnv;
-    return [own === "RUNNER_KEY", inherited === "MEASURING_KEY",
-            exec.runnerCanDo(routing.models.a, routing.stages.plan, routing) === true];
+    //
+    // This asserts what exec actually looks up, not what the config says.
+    // The first version of this fixture recomputed the fallback itself and so
+    // observed nothing: the mutation that reintroduced the bug stayed green.
+    return Promise.all([
+      exec.run({ stage: "plan", model: "a" }, { prompt: "x" }, { routing }, { timeoutMs: 1 }),
+      exec.run({ stage: "plan", model: "b" }, { prompt: "x" }, { routing }, { timeoutMs: 1 }),
+    ]).then(([withOwn, withoutOwn]) => [
+      withOwn.ok === false, /RUNNER_KEY/.test(withOwn.reason), !/MEASURING_KEY/.test(withOwn.reason),
+      withoutOwn.ok === false, /MEASURING_KEY/.test(withoutOwn.reason),
+      /runner "gw" needs/.test(withOwn.reason),
+    ]);
   }],
   ["the typesafe provider builds and parses its own wire format", () => {
     const built = jev.PROVIDERS.typesafe.build("s", { q: { type: "noul", instructions: "?" } }, { model: "jev-latest" }, "k");
