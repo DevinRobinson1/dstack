@@ -136,7 +136,11 @@
           "out": 8000,
           "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
         },
-        "needs": "text"
+        "needs": [
+          "text",
+          "agent"
+        ],
+        "$comment_needs": "Either kind. Only agent runners ship, so the plan reviewer is Codex, which reads the repository around the plan. A text runner, a CLI that prints its answer, would also qualify once one is declared under runners."
       },
       "build": {
         "kind": "ladder",
@@ -151,7 +155,7 @@
           "$comment": "Rough tokens this stage reads and writes. Only used to rank models by estimated cost; a wrong guess changes the ranking, never the tier."
         },
         "needs": "agent",
-        "$comment_needs": "Build is the one stage that edits files. Only an agent runner can do it, so a gateway model is not eligible whatever its serves line says."
+        "$comment_needs": "Build is the one stage that edits files. Only an agent runner can do it, so a text runner is not eligible whatever its serves line says."
       },
       "gate": {
         "kind": "ladder",
@@ -181,52 +185,7 @@
       }
     },
     "models": {
-      "$comment": "Prices are facts, synced from the gateway by catalog.cjs and never typed. The serves line is a claim, and it is yours. It takes a list (every stage) or an object keyed by stage, because writing code and adversarially reviewing code are different jobs. Dstack is asymmetric about where a mistake is caught: a build is checked by Prove and then Gate, a gate is checked by nothing. Spend trust accordingly.",
-      "anthropic/claude-opus-5": {
-        "provider": "anthropic",
-        "runner": "gateway",
-        "in": 5.0,
-        "out": 25.0,
-        "context": 1000000,
-        "serves": [
-          "skim",
-          "standard",
-          "deep",
-          "max"
-        ]
-      },
-      "anthropic/claude-sonnet-5": {
-        "provider": "anthropic",
-        "runner": "gateway",
-        "in": 3.0,
-        "out": 15.0,
-        "context": 1000000,
-        "serves": [
-          "skim",
-          "standard",
-          "deep"
-        ]
-      },
-      "anthropic/claude-haiku-4.5": {
-        "provider": "anthropic",
-        "runner": "gateway",
-        "in": 1.0,
-        "out": 5.0,
-        "context": 200000,
-        "serves": {
-          "build": [
-            "skim"
-          ],
-          "plan": [
-            "skim"
-          ],
-          "gate": [
-            "skim"
-          ],
-          "see": []
-        },
-        "$comment": "Kept at skim everywhere so the cheapest rung always has an Anthropic option to compare a DeepSeek run against."
-      },
+      "$comment": "The serves line is a claim, and it is yours. It takes a list (every stage) or an object keyed by stage, because writing code and adversarially reviewing code are different jobs. Dstack is asymmetric about where a mistake is caught: a build is checked by Prove and then Gate, a gate is checked by nothing. Spend trust accordingly. Prices (in and out, dollars per million tokens) are optional. The shipped runners are CLIs on a subscription and carry none; with nothing priced, the first eligible model in this list wins, so the order is a preference. Price a model only if it is billed per token, from the provider's own page, and expect the number to go stale.",
       "codex": {
         "provider": "cli",
         "runner": "codex",
@@ -239,7 +198,7 @@
           "deep",
           "max"
         ],
-        "$comment": "A CLI on a subscription, so it has no per token price. An unpriced model is never chosen on cost; it wins only when you pin it or when nothing priced serves the tier."
+        "$comment": "A CLI on a subscription, so it has no per token price. First in the list, so it is the pick wherever it serves the tier and nothing priced does, unless a stage pins another model."
       },
       "gemini": {
         "provider": "cli",
@@ -264,57 +223,12 @@
           "standard",
           "deep"
         ]
-      },
-      "deepseek/deepseek-v4-flash": {
-        "provider": "deepseek",
-        "runner": "gateway",
-        "in": null,
-        "out": null,
-        "context": null,
-        "serves": {
-          "build": [
-            "skim",
-            "standard"
-          ],
-          "plan": [
-            "skim"
-          ],
-          "gate": [],
-          "see": []
-        },
-        "$comment": "Trusted to write, not to judge. Build is generous because a build passes through Prove and then Gate before it can ship, so a weak builder is caught twice. Gate is empty because a gate passes through nothing: it is the last line, and a weak reviewer there is a miss nobody catches."
-      },
-      "deepseek/deepseek-v4-pro": {
-        "provider": "deepseek",
-        "runner": "gateway",
-        "in": null,
-        "out": null,
-        "context": null,
-        "serves": {
-          "build": [
-            "skim",
-            "standard",
-            "deep"
-          ],
-          "plan": [
-            "skim",
-            "standard"
-          ],
-          "gate": [],
-          "see": []
-        },
-        "$comment": "Same argument, one rung further up on the generation side. Still nothing at Gate until Retro has outcome data saying a cheaper reviewer holds up."
       }
     },
     "provider": "typesafe",
-    "$comment_provider": "TypeSafe direct, on TYPESAFE_API_KEY. Name the provider and nothing else: the model id and the key variable are properties of the provider, not of Jev, and jev.cjs picks both from it (TypeSafe is jev-latest on TYPESAFE_API_KEY, the Vercel gateway is typesafe-ai/jev on AI_GATEWAY_API_KEY). A config naming all three can drift apart, and both ways it has drifted read as correct: a TypeSafe key sent to Vercel (401), and the gateway model id sent to TypeSafe (400, Unknown model). Set model only to pin a version, and only for the provider it belongs to. The two providers are also different wire formats, a boolean where TypeSafe says noul and confidence on providerMetadata rather than on the answer; jev.cjs normalizes both.",
+    "$comment_provider": "TypeSafe direct, on TYPESAFE_API_KEY, the only provider jev.cjs serves. Name the provider and nothing else: jev.cjs supplies the model id (jev-latest) and the key variable. Set model only to pin a version. Add apiKeyFile to read the key from an env file when the shell does not have it; it resolves against the directory dstack runs in.",
     "runners": {
-      "$comment": "text: produces a string, so it can review, judge and summarize. agent: holds a tool loop with write access, so it can edit files and read back what changed. A text runner cannot do agent work however good the model is, and exec.cjs refuses the mismatch rather than letting a build return a paragraph describing the edits it would have made.",
-      "gateway": {
-        "kind": "text",
-        "apiKeyEnv": "AI_GATEWAY_API_KEY",
-        "$comment": "Catalog models through the Vercel AI Gateway. Its own credential, deliberately not Jev's: Jev is on TypeSafe direct. This used to inherit routing.apiKeyEnv, which is how one key came to serve two services that each need their own."
-      },
+      "$comment": "Every runner is a command line; kind says what it may be asked to do. text: prints a string, so it can review, judge and summarize. agent: holds a tool loop with write access, so it can edit files and read back what changed. A text runner cannot do agent work however good the model is, and exec.cjs refuses the mismatch rather than letting a build return a paragraph describing the edits it would have made.",
       "codex": {
         "kind": "agent",
         "command": "codex",
@@ -376,7 +290,7 @@
       "$comment": "Returns not_ready or no_objection. There is no verdict that means approved."
     },
     "provider": "typesafe",
-    "$comment_provider": "TypeSafe direct, on TYPESAFE_API_KEY. Name the provider and nothing else: the model id and the key variable are properties of the provider, not of Jev, and jev.cjs picks both from it (TypeSafe is jev-latest on TYPESAFE_API_KEY, the Vercel gateway is typesafe-ai/jev on AI_GATEWAY_API_KEY). A config naming all three can drift apart, and both ways it has drifted read as correct: a TypeSafe key sent to Vercel (401), and the gateway model id sent to TypeSafe (400, Unknown model). Set model only to pin a version, and only for the provider it belongs to. The two providers are also different wire formats, a boolean where TypeSafe says noul and confidence on providerMetadata rather than on the answer; jev.cjs normalizes both."
+    "$comment_provider": "TypeSafe direct, on TYPESAFE_API_KEY, the only provider jev.cjs serves. Name the provider and nothing else: jev.cjs supplies the model id (jev-latest) and the key variable. Set model only to pin a version. Add apiKeyFile to read the key from an env file when the shell does not have it; it resolves against the directory dstack runs in."
   },
   "retro": {
     "$comment": "The ledger that corrects the guesses. See skill/references/retro.md. Rates with sample counts beside them, not a significance test. Retro never edits a threshold; it reports and you decide.",

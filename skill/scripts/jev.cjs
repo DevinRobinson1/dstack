@@ -23,28 +23,25 @@
 const https = require("https");
 const { URL } = require("url");
 
-// No `model` here, deliberately. The model id is a property of the PROVIDER, not
-// of Jev: TypeSafe direct calls it "jev-latest" and the Vercel gateway calls it
-// "typesafe-ai/jev". A global default had the gateway's spelling, and because
-// ask() merges DEFAULTS into every call, it filled cfg.model before either
-// provider's own fallback could run. Any caller that named provider "typesafe"
-// without also naming a model therefore sent the gateway's id to TypeSafe and got
-// "Unknown model: typesafe-ai/jev" back, a 400 from a config that read as correct.
-// Each provider now owns its default, in PROVIDERS below.
+// No `model` here, deliberately. The model id is a property of the provider, and
+// a global default once held a different provider's spelling: ask() merges
+// DEFAULTS into every call, so it filled cfg.model before the provider's own
+// fallback could run, and TypeSafe answered 400 "Unknown model" to a config that
+// read as correct. The provider owns its default, in PROVIDERS below.
 const DEFAULTS = {
   provider: "typesafe",
   timeoutMs: 6000,
   retries: 1,
 };
 
-// Two ways to reach the same model, and they are not the same wire format.
+// One way to reach Jev: TypeSafe direct, on TYPESAFE_API_KEY.
 //
-// The gateway does not put confidence on the answer. It hangs it off
-// providerMetadata.typesafe.confidence, keyed by question. Reading it from the
-// answer returns undefined, which normalizes to zero, which reads as maximum
-// uncertainty, which escalates every routed decision to the top tier forever.
-// That is why both providers normalize into one canonical answer shape here
-// rather than letting callers touch a raw response.
+// PROVIDERS stays a table so the provider check in ask() and in verify.cjs has
+// one list to read, but it has one row. Jev used to be reachable through the
+// Vercel AI Gateway as well, on a different key and a different wire format
+// (a boolean where TypeSafe says noul, confidence off the answer). Carrying two
+// providers is how two configs came to name one provider's key beside the
+// other's model id, and both mismatches read as correct.
 const PROVIDERS = {
   typesafe: {
     endpoint: "https://api.typesafe.ai/v1/systemone",
@@ -60,42 +57,12 @@ const PROVIDERS = {
       return { answers: json.answers, usage: json.usage || null, cost: null, model: json.model || null };
     },
   },
+};
 
-  vercel: {
-    endpoint: "https://ai-gateway.vercel.sh/v4/ai/evaluation-model",
-    apiKeyEnv: "AI_GATEWAY_API_KEY",
-    defaultModel: "typesafe-ai/jev",
-    // Hard caps the gateway enforces: 64k tokens per request, 32k for state.
-    // The client caps below keep a bundle far under both.
-    build(state, questions, cfg, key) {
-      const translated = {};
-      for (const [name, q] of Object.entries(questions)) {
-        // The gateway calls a noul a boolean. Same question, different word.
-        translated[name] = q.type === "noul" ? Object.assign({}, q, { type: "boolean" }) : q;
-      }
-      return {
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "ai-gateway-protocol-version": "0.0.1",
-          "ai-model-id": cfg.model || "typesafe-ai/jev",
-          "ai-evaluation-model-specification-version": "4",
-        },
-        body: { state, questions: translated, providerOptions: {} },
-      };
-    },
-    parse(json) {
-      const meta = json.providerMetadata || {};
-      const conf = (meta.typesafe && meta.typesafe.confidence) || {};
-      const answers = {};
-      for (const [name, a] of Object.entries(json.answers || {})) {
-        if (a.type === "boolean") answers[name] = { type: "noul", noul: a.probability };
-        else answers[name] = Object.assign({}, a, conf[name] != null ? { confidence: conf[name] } : {});
-      }
-      const usage = json.usage ? { input_tokens: json.usage.inputTokens, output_tokens: json.usage.outputTokens } : null;
-      const gw = meta.gateway || {};
-      return { answers, usage, cost: gw.marketCost != null ? Number(gw.marketCost) : null, model: (gw.routing && gw.routing.canonicalSlug) || null };
-    },
-  },
+// A provider that was served once and is not now. A stale config naming one gets
+// told what happened and what to write instead, rather than a bare "unknown".
+const REMOVED_PROVIDERS = {
+  vercel: "the Vercel AI Gateway is no longer used; set provider to \"typesafe\" and put TYPESAFE_API_KEY in the environment or in apiKeyFile",
 };
 
 // The key may live in an env file the project already keeps out of git, which
@@ -189,6 +156,7 @@ function resolveConfig(opts) {
 async function ask(state, questions, opts) {
   const cfg = resolveConfig(opts);
   const provider = PROVIDERS[cfg.provider];
+  if (!provider && REMOVED_PROVIDERS[cfg.provider]) return { ok: false, reason: `routing provider "${cfg.provider}" was removed: ${REMOVED_PROVIDERS[cfg.provider]}`, answers: null, usage: null };
   if (!provider) return { ok: false, reason: `unknown routing provider "${cfg.provider}", expected one of ${Object.keys(PROVIDERS).join(", ")}`, answers: null, usage: null };
   const envName = cfg.apiKeyEnv || provider.apiKeyEnv;
   const key = readKey(envName, cfg.apiKeyFile);
@@ -246,4 +214,4 @@ function reading(answer) {
 function clamp01(n) { return Math.min(1, Math.max(0, Number(n) || 0)); }
 function num(v, fallback) { return Number.isFinite(Number(v)) ? Number(v) : fallback; }
 
-module.exports = { ask, reading, redact, readKey, resolveConfig, DEFAULTS, PROVIDERS, ALLOWED_STATE_KEYS, CAPS };
+module.exports = { ask, reading, redact, readKey, resolveConfig, DEFAULTS, PROVIDERS, REMOVED_PROVIDERS, ALLOWED_STATE_KEYS, CAPS };

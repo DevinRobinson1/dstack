@@ -197,9 +197,14 @@ if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not poin
     const kinds = Object.values(r.runners || {}).map((x) => x && x.kind).filter(Boolean);
     if (!rule.needs) problems.push(`routing: stage ${stage} does not declare needs, so the router cannot tell which runners can do its work`);
     else {
-      for (const k of (Array.isArray(rule.needs) ? rule.needs : [rule.needs])) {
-        if (!kinds.includes(k)) problems.push(`routing: stage ${stage} needs "${k}", which no runner declares`);
-      }
+      // needs is a list of alternatives, which is how exec.cjs reads it: a
+      // runner of ANY listed kind can do the work. So each name must be a real
+      // kind (a typo would silently match nothing), and at least one must be a
+      // kind some runner declares. Requiring every listed kind to have a runner
+      // would make "text or agent" unwritable whenever no text runner ships.
+      const listed = Array.isArray(rule.needs) ? rule.needs : [rule.needs];
+      for (const k of listed) if (!["text", "agent"].includes(k)) problems.push(`routing: stage ${stage} needs "${k}", which is not a kind (text or agent)`);
+      if (!listed.some((k) => kinds.includes(k))) problems.push(`routing: stage ${stage} needs ${listed.join(" or ")}, and no runner declares any of them`);
       // The gate printing "none" is this: every tier in range must have at
       // least one enabled model that both serves it and can do the work.
       const exec = require("./exec.cjs");
@@ -292,30 +297,6 @@ if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not poin
   } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
 })();
 
-// A runner that reaches a paid service needs a credential named somewhere, and
-// the routing block's key is the measuring model's, not the runner's. Those
-// were the same key only while both went through one gateway; silently reusing
-// it is a 401 at the stage from a config that reads as consistent.
-(function runnerCredentials() {
-  const cfgPath = path.join(root, "..", "dstack.config.example.json");
-  if (!fs.existsSync(cfgPath)) return;
-  let cfg;
-  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
-  const r = cfg.routing || {};
-  const used = new Set(Object.entries(r.models || {})
-    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && m.runner)
-    .map(([, m]) => m.runner));
-  for (const runner of used) {
-    const declared = (r.runners || {})[runner] || {};
-    if (declared.kind !== "text") continue;
-    const named = declared.apiKeyEnv || r.apiKeyEnv;
-    if (!named) problems.push(`routing: runner "${runner}" is a text runner with no apiKeyEnv, so nothing says which credential reaches it`);
-    if (r.provider && r.provider !== "vercel" && !declared.apiKeyEnv) {
-      problems.push(`routing: the measuring provider is "${r.provider}" but text runner "${runner}" has no apiKeyEnv of its own, so it would inherit the measuring model's key and fail against a different service`);
-    }
-  }
-})();
-
 // A routing invocation without --head writes an artifact Retro cannot
 // attribute, so the decision is silently dropped from every rate.
 for (const m of (read("references/stages.md").match(/route\.cjs --stage \w+[^`]*/g) || [])) {
@@ -328,13 +309,26 @@ for (const m of (read("references/stages.md").match(/route\.cjs --stage \w+[^`]*
 // unnoticed.
 if (!/exec\.cjs/.test(read("references/stages.md")))
   problems.push("exec: no contract names exec.cjs, so nothing runs the model the router picks");
-if (!/catalog\.cjs[^`]*--check/.test(read("references/stages.md")))
-  problems.push("catalog: no contract runs --check, so an unreachable model stays in the ranking until a stage fails on it");
 
-// Prices go stale the day a provider changes them. Something must say when to
-// check, or catalog.cjs is a tool nobody is told to run.
-if (!/catalog\.cjs/.test(read("references/stages.md") + skill))
-  problems.push("catalog: no contract names catalog.cjs, so nothing says when to check prices against the gateway");
+// Dstack does not use the Vercel AI Gateway. Jev is TypeSafe direct and every
+// runner is a command line. The gateway's endpoint, key, model id and runner
+// name must not come back through a script, a contract or the example config,
+// because a second route to Jev is how two configs came to pair one provider's
+// key with the other's model id. Test files are exempt: one asserts the refusal.
+// So is this file, which has to spell the pattern to look for it.
+(function noGateway() {
+  const banned = /ai-gateway\.vercel\.sh|AI_GATEWAY_API_KEY|typesafe-ai\/jev|"runner"\s*:\s*"gateway"/;
+  const scripts = fs.readdirSync(path.join(root, "scripts"))
+    .filter((f) => f.endsWith(".cjs") && !f.endsWith(".test.cjs") && f !== "verify.cjs").map((f) => `scripts/${f}`);
+  const targets = files.concat(scripts).map((f) => [f, path.join(root, f)])
+    .concat([["README.md", path.join(root, "..", "README.md")], ["dstack.config.example.json", path.join(root, "..", "dstack.config.example.json")]]);
+  for (const [name, p] of targets) {
+    if (!fs.existsSync(p)) continue;
+    const lines = fs.readFileSync(p, "utf8").split(/\r?\n/);
+    const at = lines.findIndex((l) => banned.test(l));
+    if (at !== -1) problems.push(`${name}:${at + 1}: names the Vercel AI Gateway (${lines[at].match(banned)[0]}), which dstack no longer uses`);
+  }
+})();
 
 // Triage: thresholds must be numbers in range, and the invariant has to be
 // stated where a reader of the contract will hit it.

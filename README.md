@@ -54,10 +54,10 @@ Uncertainty routes up, never down: a reading the model is not confident about co
 A tier is a class of work, not a model. Which model serves a tier is a line in your catalog, and the router never writes it:
 
 ```json
-"claude-sonnet-5": { "in": 3.00, "out": 15.00, "serves": ["skim", "standard", "deep"] }
+"codex": { "runner": "codex", "in": null, "out": null, "serves": ["skim", "standard", "deep", "max"] }
 ```
 
-`serves` is your statement of what you trust a model with. All the router does is pick the cheapest model you already said could do the job, which is why this lowers a bill and cannot lower a standard. Cheapest is computed per stage, because the shape of the work decides it: a gate reads 80k tokens and writes 6k, a build writes 20k, and a model with cheap input and dear output wins one and loses the other. `node scripts/route.cjs --explain` prints the whole comparison.
+`serves` is your statement of what you trust a model with. All the router does is pick the cheapest model you already said could do the job, which is why this lowers a bill and cannot lower a standard. Every runner is a command line, and the CLIs that ship carry no per token price, so with nothing priced the first eligible model in the catalog wins. A model billed per token can carry a price you keep current. Cheapest is computed per stage, because the shape of the work decides it: a gate reads 80k tokens and writes 6k, a build writes 20k, and a model with cheap input and dear output wins one and loses the other. `node scripts/route.cjs --explain` prints the whole comparison.
 
 The full contract is in [skill/references/routing.md](skill/references/routing.md). Routing is optional: one key turns it off and every stage returns to a fixed effort.
 
@@ -97,7 +97,7 @@ Worth separating, because five rounds of adversarial review made the difference 
 
 | | Findings | Has it run? |
 |---|---|---|
-| Routing | 0 | yes, live against the gateway |
+| Routing | 0 | yes, live against Jev |
 | Exec | 7 | yes, live twice |
 | Retro | 13 | **no** |
 
@@ -132,7 +132,7 @@ Requires [Claude Code](https://claude.com/claude-code) and [Node.js](https://nod
 
 A missing CLI is announced once and that route is skipped. A missing CLI never silently downgrades a gate to a pass.
 
-Routing additionally needs a key for the System One model that decides what each stage costs, reached either through the Vercel AI Gateway (`AI_GATEWAY_API_KEY`, model `typesafe-ai/jev`) or from TypeSafe directly (`TYPESAFE_API_KEY`). It is optional. Without it, every stage runs at the fixed effort it used before routing existed, and says so.
+Routing additionally needs a key for the System One model that decides what each stage costs, from TypeSafe directly (`TYPESAFE_API_KEY`, in the environment or in the env file `apiKeyFile` names). It is optional. Without it, every stage runs at the fixed effort it used before routing existed, and says so.
 
 ```bash
 git clone https://github.com/DevinRobinson1/dstack.git

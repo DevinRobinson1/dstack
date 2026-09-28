@@ -20,21 +20,11 @@ No model name, no effort level, and no price appears in a question. The question
 
 `dstack.config.json` holds the ladder, the weights, the bands and the floors. Changing which model runs a deep review is a config edit. The question set does not move.
 
-## Two ways to reach it, and they are not the same wire format
+## Reaching it
 
-`provider: "vercel"` goes through the Vercel AI Gateway as `typesafe-ai/jev` on an `AI_GATEWAY_API_KEY`. `provider: "typesafe"` goes to TypeSafe directly on a `TYPESAFE_API_KEY`. Same model, different envelope, and the differences are not cosmetic:
+One way: TypeSafe direct. Write `"provider": "typesafe"` and nothing else. `jev.cjs` supplies the model id, `jev-latest`, and the key variable, `TYPESAFE_API_KEY`. Set `model` only to pin a version. The model id travels in the body, a yes or no question is a `noul` answered on `.noul`, and confidence sits on the answer. Read it from anywhere else and it is `undefined`, which normalizes to zero, which reads as total uncertainty and escalates every routed decision to the top tier, looking like caution rather than a bug. No caller touches a raw response; `jev.cjs` hands back one answer shape.
 
-| | TypeSafe direct | Vercel gateway |
-|---|---|---|
-| model id | in the body | in an `ai-model-id` header, with a protocol version and a spec version beside it |
-| a yes or no question | `type: "noul"`, answered on `.noul` | `type: "boolean"`, answered on `.probability` |
-| confidence | on the answer | on `providerMetadata.typesafe.confidence`, keyed by question |
-| usage | `input_tokens` | `inputTokens` |
-| cost | not reported | `providerMetadata.gateway.marketCost` |
-
-The third row is the dangerous one. Read confidence off the answer on a gateway response and it is `undefined`, which normalizes to zero, which reads as total uncertainty, which escalates every routed decision to the top tier forever and looks like caution rather than a bug. That is why `jev.cjs` normalizes both providers into one canonical answer shape and no caller ever touches a raw response.
-
-The gateway caps a request at 64,000 tokens and the state at 32,000. The client caps sit far under both.
+Jev used to be reachable through the Vercel AI Gateway as well, on another key, another model id and another wire format. That route is gone. Carrying two let two configs pair one provider's key with the other's model id, and both mismatches read as correct while every stage quietly ran at its default. A config that still says `vercel` is told the route was removed and what to write instead, and the stage runs at its default, as with any other router failure.
 
 **Finding the key.** `apiKeyEnv` names the variable. If it is unset, and `apiKeyFile` names a file, the key is read from there: a `KEY=value` line, `export` prefix and quotes tolerated. That exists because the usual reason a key does not work is that it was exported in a terminal and never reached a tool shell, while it sits in a gitignored env file the project already keeps.
 
@@ -60,11 +50,13 @@ There are deliberately **no surface ceilings**. A documentation change that meas
 
 A tier is a class of work, not a model. Which model serves a tier is the catalog's job, and the catalog is yours:
 
-    "claude-sonnet-5": { "in": 3.00, "out": 15.00, "serves": ["skim", "standard", "deep"] }
+    "codex": { "runner": "codex", "in": null, "out": null, "serves": ["skim", "standard", "deep", "max"] }
 
 That `serves` line is a statement about what you trust a model with, and the router never writes it or second guesses it. All the router does is pick the cheapest model you already said could do the job. That is the whole reason this can lower a bill without lowering a standard: it is choosing inside a set you drew.
 
-**Price is a fact. Capability is a claim.** The prices come from the gateway, synced by `catalog.cjs`, and are never typed by hand: a hand typed price is stale the day a provider changes it, and nothing would notice, because the router would go on ranking confidently against a number that used to be true. `serves` is the opposite: it is the one line a machine must not write, and sync never touches it. A model added to the catalog arrives with `serves: []`, which is inert. It sits there, priced and visible and unpickable, until a person says what it is for.
+**Capability is a claim, and it is yours.** `serves` is the one line a machine must not write. A model added to the catalog arrives with `serves: []`, which is inert. It sits there, visible and unpickable, until a person says what it is for.
+
+**Prices are optional.** Every runner is a command line, and the ones that ship are CLIs on a subscription with no per token price. A model billed per token may carry `in` and `out` in dollars per million tokens, typed from the provider's own price page, and is then ranked on cost against the stage's shape. Nothing syncs those numbers, so they go stale the day the provider changes them, and the ranking goes on trusting a number that used to be true. Price a model only if you will keep its price current.
 
 **serves can differ per stage,** because writing code and adversarially reviewing code are different jobs and a model can be strong at one and weak at the other:
 
@@ -80,7 +72,7 @@ Run `node scripts/route.cjs --explain` to see the whole comparison: every model,
 
 Three rules on the catalog:
 
-- **An unpriced model never outranks a priced one.** A subscription CLI has no per token price and cannot be compared on cost, so it wins a tier only when pinned or when nothing priced serves that tier.
+- **An unpriced model never outranks a priced one.** A subscription CLI has no per token price and cannot be compared on cost, so it wins a tier only when pinned or when nothing priced serves that tier. With nothing priced at all, the first eligible model in catalog order wins, so the order is a preference.
 - **A pin skips the ranking but not the catalog.** Pinning a stage to a model that the catalog does not say serves that stage's floor is a config error the verifier rejects, not a silent fallback.
 - **A disabled model leaves the catalog entirely** rather than being chosen and then failing at the point of use.
 

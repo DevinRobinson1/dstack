@@ -283,9 +283,9 @@ const CLIENT_CASES = [
     const out = jev.redact("y".repeat(9000));
     return [typeof out === "string", out.length < 5000];
   }],
-  ["a missing api key is a failure naming that provider's own variable", async () => {
+  ["a missing api key is a failure naming TYPESAFE_API_KEY", async () => {
     const checks = [];
-    for (const [provider, envName] of [["typesafe", "TYPESAFE_API_KEY"], ["vercel", "AI_GATEWAY_API_KEY"]]) {
+    for (const [provider, envName] of [["typesafe", "TYPESAFE_API_KEY"]]) {
       const saved = process.env[envName];
       delete process.env[envName];
       const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider });
@@ -298,29 +298,17 @@ const CLIENT_CASES = [
     const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider: "openrouter" });
     return [res.ok === false, /not one jev.cjs serves|unknown routing provider/.test(res.reason)];
   }],
-  ["a text runner's credential is its own, not the measuring model's", () => {
-    const exec = require("./exec.cjs");
-    const routing = {
-      provider: "typesafe", apiKeyEnv: "MEASURING_KEY",
-      runners: { gw: { kind: "text", apiKeyEnv: "RUNNER_KEY" }, bare: { kind: "text" } },
-      models: { a: { runner: "gw" }, b: { runner: "bare" } },
-      stages: { plan: { needs: ["text"] } },
-    };
-    // Jev and the catalog models shared one gateway, so one key served both.
-    // Once Jev moved to its own API, reusing routing.apiKeyEnv here sent a
-    // TypeSafe key to Vercel: a 401 from a config that read as consistent.
-    //
-    // This asserts what exec actually looks up, not what the config says.
-    // The first version of this fixture recomputed the fallback itself and so
-    // observed nothing: the mutation that reintroduced the bug stayed green.
-    return Promise.all([
-      exec.run({ stage: "plan", model: "a" }, { prompt: "x" }, { routing }, { timeoutMs: 1 }),
-      exec.run({ stage: "plan", model: "b" }, { prompt: "x" }, { routing }, { timeoutMs: 1 }),
-    ]).then(([withOwn, withoutOwn]) => [
-      withOwn.ok === false, /RUNNER_KEY/.test(withOwn.reason), !/MEASURING_KEY/.test(withOwn.reason),
-      withoutOwn.ok === false, /MEASURING_KEY/.test(withoutOwn.reason),
-      /runner "gw" needs/.test(withOwn.reason),
-    ]);
+  ["a config still naming the Vercel gateway is told it was removed, and nothing is sent", async () => {
+    // Jev is TypeSafe direct only. A stale config gets a reason that says what
+    // to write instead, on the same never-throw path as any other failure.
+    // Asked with a key present so the refusal cannot be the missing-key one.
+    const saved = process.env.AI_GATEWAY_API_KEY;
+    process.env.AI_GATEWAY_API_KEY = "not-a-real-key";
+    const res = await jev.ask({ claim: "x" }, { q: { type: "noul", instructions: "?" } }, { provider: "vercel", timeoutMs: 1 });
+    if (saved === undefined) delete process.env.AI_GATEWAY_API_KEY; else process.env.AI_GATEWAY_API_KEY = saved;
+    return [res.ok === false, res.answers === null, /"vercel" was removed/.test(res.reason),
+            /provider to "typesafe"/.test(res.reason), /TYPESAFE_API_KEY/.test(res.reason),
+            Object.keys(jev.PROVIDERS).join(",") === "typesafe"];
   }],
   // Goes through resolveConfig(), the merge ask() performs, rather than calling
   // build() with a model the test chose. The test below this one passes
@@ -328,10 +316,11 @@ const CLIENT_CASES = [
   // global DEFAULTS.model of "typesafe-ai/jev" overrode every real call and TypeSafe
   // rejected it with "Unknown model". A test that picks the input the bug would
   // have replaced cannot see the bug.
-  ["each provider sends its own model id when the caller names none", () => {
+  ["typesafe sends its own model id when the caller names none", () => {
     const q = { q: { type: "noul", instructions: "?" } };
     const ts = jev.PROVIDERS.typesafe.build("s", q, jev.resolveConfig({ provider: "typesafe" }), "k");
-    const gw = jev.PROVIDERS.vercel.build("s", q, jev.resolveConfig({ provider: "vercel" }), "k");
+    // And when the caller names no provider either: the default is typesafe.
+    const bare = jev.PROVIDERS[jev.resolveConfig({}).provider].build("s", q, jev.resolveConfig({}), "k");
     // An explicit model still wins, so a project pinning a version keeps it.
     const pinned = jev.PROVIDERS.typesafe.build("s", q, jev.resolveConfig({ provider: "typesafe", model: "jev-1.13.0" }), "k");
     // route.cjs and triage.cjs pass `model: <config value>`, which is undefined
@@ -341,7 +330,7 @@ const CLIENT_CASES = [
     return [
       ts.body.model === "jev-latest",
       ts.body.model !== "typesafe-ai/jev",
-      gw.headers["ai-model-id"] === "typesafe-ai/jev",
+      bare.body.model === "jev-latest",
       pinned.body.model === "jev-1.13.0",
       omitted.body.model === "jev-latest",
       jev.DEFAULTS.model === undefined,
@@ -349,8 +338,7 @@ const CLIENT_CASES = [
   }],
   ["the typesafe provider builds and parses its own wire format", () => {
     const built = jev.PROVIDERS.typesafe.build("s", { q: { type: "noul", instructions: "?" } }, { model: "jev-latest" }, "k");
-    // TypeSafe direct takes the model in the body and keeps `noul` as `noul`.
-    // The gateway takes it in a header and calls the same thing `boolean`.
+    // TypeSafe takes the model in the body and keeps `noul` as `noul`.
     const parsed = jev.PROVIDERS.typesafe.parse({
       model: "jev-1.13.0",
       answers: {
@@ -364,67 +352,24 @@ const CLIENT_CASES = [
       built.body.model === "jev-latest", built.body.questions.q.type === "noul",
       built.headers.Authorization === "Bearer k",
       built.headers["ai-model-id"] === undefined,
-      // Confidence is ON the answer here, and on providerMetadata at the
-      // gateway. Reading it from the wrong place normalizes to 0, which reads
-      // as total uncertainty and escalates every decision forever.
+      // Confidence is ON the answer. Read from anywhere else it is undefined,
+      // normalizes to 0, reads as total uncertainty and escalates every decision.
       b.confidence === 0.94, b.raw === 2.94, b.top === 3,
       parsed.usage.input_tokens === 414, parsed.model === "jev-1.13.0",
       parsed.cost === null,
     ];
   }],
-  ["both providers normalize into one shape, so callers cannot tell them apart", () => {
-    const gw = jev.PROVIDERS.vercel.parse({
-      answers: { a: { type: "boolean", probability: 0.99 }, b: { type: "score", score: 2.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
-      usage: { inputTokens: 414, outputTokens: 71 },
-      providerMetadata: { typesafe: { confidence: { b: 0.94 } } },
-    });
-    const ts = jev.PROVIDERS.typesafe.parse({
-      answers: { a: { type: "noul", noul: 0.99 }, b: { type: "score", score: 2.94, confidence: 0.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
-      usage: { input_tokens: 414, output_tokens: 71 },
-    });
-    const ra = [jev.reading(gw.answers.a), jev.reading(ts.answers.a)];
-    const rb = [jev.reading(gw.answers.b), jev.reading(ts.answers.b)];
-    // The whole point of normalizing: switching providers must not change a
-    // single routing decision, and nothing downstream should need to know.
-    return [ra[0].value === ra[1].value, ra[0].confidence === ra[1].confidence,
-            rb[0].value === rb[1].value, rb[0].confidence === rb[1].confidence,
-            gw.usage.input_tokens === ts.usage.input_tokens];
-  }],
-  ["the gateway's boolean becomes a noul, and its confidence is found", () => {
-    const parsed = jev.PROVIDERS.vercel.parse({
-      answers: { a: { type: "boolean", probability: 0.99 }, b: { type: "score", score: 2.94, probabilities: { 0: 0, 1: 0.02, 2: 0.01, 3: 0.97 } } },
-      usage: { inputTokens: 414, outputTokens: 71 },
-      providerMetadata: { typesafe: { confidence: { b: 0.94 } }, gateway: { marketCost: "0.000017388" } },
-    });
-    const a = jev.reading(parsed.answers.a);
-    const b = jev.reading(parsed.answers.b);
-    return [
-      parsed.answers.a.type === "noul", a.value === 0.99,
-      // The trap: confidence hangs off providerMetadata, not the answer. Read
-      // from the answer it is undefined, normalizes to 0, and escalates forever.
-      b.confidence === 0.94, b.raw === 2.94, b.top === 3,
-      parsed.usage.input_tokens === 414, parsed.cost === 0.000017388,
-    ];
-  }],
-  ["a noul question is sent to the gateway as a boolean", () => {
-    const built = jev.PROVIDERS.vercel.build("s", { q: { type: "noul", instructions: "?" }, c: { type: "choice", instructions: "?", criteria: {} } }, {}, "k");
-    return [built.body.questions.q.type === "boolean", built.body.questions.c.type === "choice",
-            built.headers["ai-model-id"] === "typesafe-ai/jev",
-            built.headers["ai-gateway-protocol-version"] === "0.0.1",
-            built.headers["ai-evaluation-model-specification-version"] === "4",
-            built.body.model === undefined];
-  }],
   ["a key in an env file is found when the shell does not have it", () => {
     const fs = require("fs"), os = require("os"), path = require("path");
     const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "dstack-")), "env");
-    fs.writeFileSync(f, 'OTHER=1\nexport AI_GATEWAY_API_KEY="vck_fixture_value"\nMORE=2\n');
-    const saved = process.env.AI_GATEWAY_API_KEY;
-    delete process.env.AI_GATEWAY_API_KEY;
-    const found = jev.readKey("AI_GATEWAY_API_KEY", f);
+    fs.writeFileSync(f, 'OTHER=1\nexport TYPESAFE_API_KEY="ts_fixture_value"\nMORE=2\n');
+    const saved = process.env.TYPESAFE_API_KEY;
+    delete process.env.TYPESAFE_API_KEY;
+    const found = jev.readKey("TYPESAFE_API_KEY", f);
     const missing = jev.readKey("NOT_PRESENT", f);
-    if (saved !== undefined) process.env.AI_GATEWAY_API_KEY = saved;
+    if (saved !== undefined) process.env.TYPESAFE_API_KEY = saved;
     fs.rmSync(path.dirname(f), { recursive: true, force: true });
-    return [found === "vck_fixture_value", missing === null, jev.readKey("X", null) === null];
+    return [found === "ts_fixture_value", missing === null, jev.readKey("X", null) === null];
   }],
 ];
 

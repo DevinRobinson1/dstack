@@ -11,25 +11,28 @@
 //
 // Dstack's stages are not one kind of work. Build is "Codex, with write
 // access, from the frozen plan": an agent that edits a repository and reacts
-// to what happens. Gate is a review of a diff: text in, findings out. A chat
-// completion can do the second and physically cannot do the first, however
-// good the model is at writing code in the abstract.
+// to what happens. Gate is a review of a diff: text in, findings out. A runner
+// that only returns a string can do the second and physically cannot do the
+// first, however good the model is at writing code in the abstract.
 //
 // So runners declare a kind, stages declare what they need, and a mismatch is
 // refused here rather than discovered when a build produces a paragraph
 // describing the edits it would have made.
+//
+// Every runner is a command line. The kind says what a runner can do, not how
+// it is reached: a text runner is a CLI that prints its answer, an agent is a
+// CLI that edits files. There used to be a second transport, chat completions
+// through the Vercel AI Gateway, on its own key. It is gone, and with it the
+// only runner that ever had a credential of its own to get wrong.
 "use strict";
 
-const https = require("https");
 const { spawn } = require("child_process");
-const jev = require("./jev.cjs");
-
-const GATEWAY_CHAT = "https://ai-gateway.vercel.sh/v1/chat/completions";
 
 // text:  produces a string. Reviews, judgements, summaries.
 // agent: holds a tool loop with write access. Builds, fixes, anything that
 //        changes a file and then reads back what changed.
-const RUNNER_KINDS = { gateway: "text", codex: "agent", gemini: "agent", grok: "agent" };
+// No text runner ships. One is declared in the config with a command, like any other.
+const RUNNER_KINDS = { codex: "agent", gemini: "agent", grok: "agent" };
 
 function runnerKind(model, routing) {
   const declared = ((routing && routing.runners) || {})[model && model.runner];
@@ -84,59 +87,8 @@ function canRun(decision, rule, routing) {
 }
 
 // ---------------------------------------------------------------------------
-// The two runners.
+// The runner: a command line.
 // ---------------------------------------------------------------------------
-
-// Pure, so the guarantee below is a fixture rather than a live call.
-//
-// A review cut off at the token limit reads exactly like a short review. Any
-// stop that is not a natural one is a failure, because the caller cannot tell
-// a finished judgement from half of one, and half a gate review that looks
-// whole is worse than no review.
-function readCompletion(d, model) {
-  const choice = d && d.choices && d.choices[0];
-  if (!choice || !choice.message) return { ok: false, reason: "the gateway returned no message" };
-  const fin = choice.finish_reason;
-  // No stop reason is not a natural stop, it is an unproven one. The earlier
-  // version blessed absence as "legacy", which contradicted the rule it was
-  // written to enforce: the caller still cannot tell a finished judgement from
-  // half of one. Every gateway provider returns this field, so absence is
-  // anomalous and says so loudly rather than passing quietly.
-  if (fin !== "stop" && fin !== "end_turn") {
-    const why = fin ? `stopped early (${fin})` : "returned no stop reason, so completion is unproven";
-    return { ok: false, reason: `${model} ${why}, so its answer cannot be read as complete`, partial: choice.message.content || "" };
-  }
-  return { ok: true, text: choice.message.content, usage: d.usage || null, model: d.model || model };
-}
-
-function chat(model, messages, key, timeoutMs, maxTokens) {
-  return new Promise((resolve) => {
-    const payload = Buffer.from(JSON.stringify({ model, messages, max_tokens: maxTokens || 4000 }), "utf8");
-    const u = new URL(GATEWAY_CHAT);
-    const req = https.request(
-      { hostname: u.hostname, path: u.pathname, method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "Content-Length": payload.length } },
-      (res) => {
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          if (res.statusCode !== 200) {
-            let why = text.slice(0, 200);
-            try { why = (JSON.parse(text).error || {}).message || why; } catch { /* keep raw */ }
-            resolve({ ok: false, status: res.statusCode, reason: why });
-            return;
-          }
-          try { resolve(Object.assign({ status: 200 }, readCompletion(JSON.parse(text), model))); }
-          catch (e) { resolve({ ok: false, status: 200, reason: `the gateway returned something unreadable: ${e.message}` }); }
-        });
-      }
-    );
-    req.setTimeout(timeoutMs, () => { req.destroy(); resolve({ ok: false, status: 0, reason: `no answer in ${timeoutMs}ms` }); });
-    req.on("error", (e) => resolve({ ok: false, status: 0, reason: e.message }));
-    req.end(payload);
-  });
-}
 
 // An agent runner has write access. Reporting a timeout while it is still
 // alive means Dstack starts its fallback while the first process keeps editing
@@ -196,35 +148,17 @@ async function run(decision, task, config, opts) {
   // used before routing, and says on the PR that it did and why.
   if (!gate.ok) return { ok: false, refused: true, reason: gate.why, fallback: rule.fallbackRunner || "the stage default" };
 
+  // Text or agent, the runner is the command line it declares. The kind was
+  // already checked above; it decides what a runner may be asked to do, and
+  // plays no part in how it is invoked.
   const model = routing.models[decision.model];
-  if (gate.kind === "text") {
-    // The credential belongs to the RUNNER, not to the routing block. Those
-    // were the same thing only while Jev and the catalog models shared one
-    // gateway. Once Jev moved to its own API, routing.apiKeyEnv meant the Jev
-    // key, and reusing it here sent a TypeSafe key to the Vercel gateway: a
-    // 401 at the stage, from a config that looked entirely consistent.
-    const declared = (routing.runners || {})[model.runner] || {};
-    const envName = declared.apiKeyEnv || routing.apiKeyEnv || "AI_GATEWAY_API_KEY";
-    const key = jev.readKey(envName, declared.apiKeyFile || routing.apiKeyFile);
-    if (!key) {
-      return { ok: false, reason: `no ${envName} in the environment${routing.apiKeyFile ? ` or in ${routing.apiKeyFile}` : ""}, which is what runner "${model.runner}" needs` };
-    }
-    const res = await chat(decision.model, [
-      { role: "system", content: task.system || "You are reviewing software changes. Be concrete and brief." },
-      { role: "user", content: task.prompt },
-    ], key, (opts && opts.timeoutMs) || 120000, task.maxTokens);
-    if (!res.ok) return { ok: false, reason: `${decision.model} did not answer (${res.status}): ${res.reason}`, partial: res.partial };
-    return { ok: true, kind: "text", model: res.model, text: res.text, usage: res.usage,
-             usageSource: "runner", cost: estimate(model, res.usage) };
-  }
-
   const invoke = runnerCommand(model, routing);
   const argv = invoke.args.concat(task.args || []);
   const viaArg = invoke.promptVia === "arg";
   if (viaArg) argv.push(task.prompt);
   const res = await cli(invoke.command, argv, viaArg ? "" : task.prompt, (opts && opts.timeoutMs) || 600000, (opts && opts.graceMs) || 10000);
   return res.ok
-    ? { ok: true, kind: "agent", model: decision.model, text: res.text, usage: null, cost: null }
+    ? { ok: true, kind: gate.kind, model: decision.model, text: res.text, usage: null, cost: null }
     : { ok: false, reason: res.reason, text: res.text };
 }
 
@@ -282,4 +216,4 @@ function runnerCanDo(model, rule, routing) {
   return runnerCapability(model, rule, routing).ok;
 }
 
-module.exports = { run, canRun, runnerCanDo, runnerCapability, readCompletion, runnerKind, runnerCommand, chat, cli, estimate, RUNNER_KINDS, GATEWAY_CHAT };
+module.exports = { run, canRun, runnerCanDo, runnerCapability, runnerKind, runnerCommand, cli, estimate, RUNNER_KINDS };

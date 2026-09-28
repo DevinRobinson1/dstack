@@ -146,9 +146,7 @@ How: `scripts/ci/deploy-watch.cjs` (Plan 5): `/api/health`, error rate, and the 
 
 How: `node scripts/retro.cjs --fit` prints, per question, a finding, a "nothing worth acting on", or how many more rows it needs. Per S9 it never reports below the configured minimum and never edits a threshold: a person changes the config.
 
-Also at Retro, check that the catalog is still true. `node scripts/catalog.cjs --config dstack.config.json --check` calls every priced model once and reports what actually answers: a model can be listed, priced and trusted and still refuse the account, in which case the router picks it and the stage fails. Reachability is a fact like price, not a claim like `serves`.
-
-And check the prices the whole cost ranking rests on: `node scripts/catalog.cjs --config dstack.config.json` reports any drift between the catalog and what the gateway actually charges, and `--write` applies it. Prices are facts and go stale silently; `serves` is a claim and is never touched. `--suggest --stage <stage>` ranks every model the gateway offers against that stage's real read and write shape.
+Also at Retro, check that the catalog is still true. Every runner is a command line, so `node scripts/route.cjs --explain` shows what each tier would pick, and a runner whose CLI is missing from `PATH` is a pick that fails at the stage. If a model carries a per token price, compare it with the provider's own page: nothing syncs it, and a stale price ranks confidently.
 
 ## Stop rules
 
