@@ -17,7 +17,7 @@ const ROUTES = [
 const STAGES = ROUTES.map((r) => r[2]);
 const HEADINGS = ROUTES.map((r) => `## ${r[0]}. ${r[1]}`);
 const FIELDS = ["**Who:**", "**Needs:**", "**Produces:**", "**Owner reads:**", "**Stop:**"];
-const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md"];
+const files = ["SKILL.md", "references/stages.md", "references/pr-evidence.md", "references/class-rule.md", "references/routing.md", "references/triage.md", "references/state.md", "references/retro.md"];
 
 for (const f of files) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`${f}: missing`);
@@ -41,6 +41,9 @@ if (desc.length >= 300) problems.push(`SKILL.md: description is ${desc.length} c
 if (!/^[A-Z][a-z]+ /.test(desc)) problems.push("SKILL.md: description must start with an action verb");
 if (!/Use when/.test(desc)) problems.push("SKILL.md: description needs a Use when clause");
 const words = skill.split(/\s+/).filter(Boolean).length;
+// 1700, unchanged since Plan 1. Routing and triage were fitted under it by
+// moving the state schema to references/state.md, not by moving the number.
+// A threshold that moves when it is inconvenient is the defect Plan 7 is about.
 if (words > 1700) problems.push(`SKILL.md: ${words} words, limit 1700`);
 
 // Routing table: each row is checked as its (number, name, command) tuple, in order.
@@ -82,7 +85,7 @@ const block = (text, name) => {
 const a = block(skill, "SKILL.md"), b = block(contract, "stages.md");
 if (a !== null && b !== null && a !== b) problems.push("stop-rule block differs between SKILL.md and stages.md");
 if (a) {
-  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
+  for (const id of ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"]) if (!a.includes(`**${id} `)) problems.push(`stop rules: ${id} missing from the canonical block`);
   if (!/autoMergeOnPass/.test(a)) problems.push("stop rules: S6 must name autoMergeOnPass");
   if (!/BOTH/.test(a)) problems.push("stop rules: S1 must require BOTH the Codex verdict and the owner's yes");
 }
@@ -98,13 +101,274 @@ for (const heading of ["## Pre-flight", "## Pre-delivery check"]) {
 
 // The PR template carries every stage line and every required section.
 for (const s of STAGES) if (!new RegExp(`^\\s*${s}:`, "m").test(evidence)) problems.push(`pr-evidence.md: Stages block has no line for ${s}`);
-for (const section of ["## Claim", "## Evidence is about", "## Stages", "## Baseline proof", "## Proof ledger", "## Acceptance", "## Class", "## Out of scope", "## Deviations from the plan", "## Not verified", "## Risks and prerequisites", "## Rollback"]) {
-  if (!evidence.includes(section)) problems.push(`pr-evidence.md: missing ${section}`);
+for (const section of ["## Claim", "## Evidence is about", "## Stages", "## Baseline proof", "## Proof ledger", "## Acceptance", "## Routing", "## Class", "## Out of scope", "## Deviations from the plan", "## Not verified", "## Risks and prerequisites", "## Rollback"]) {
+  // Line anchored: "## Routing-renamed" contains "## Routing" and must not pass.
+  if (!new RegExp(`^\\s*${section.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*$`, "m").test(evidence)) problems.push(`pr-evidence.md: missing ${section}`);
 }
 
-// The state file example in SKILL.md names every stage, and the vocabulary includes stale.
-for (const s of STAGES) if (!new RegExp(`"${s}":\\s*\\{`).test(skill)) problems.push(`SKILL.md: state file example has no "${s}" entry`);
+// The state schema lives in its own reference and names every stage; SKILL.md
+// keeps only the vocabulary, which is all routing a stage actually needs.
+const state = read("references/state.md");
+for (const s of STAGES) if (!new RegExp(`"${s}":\\s*\\{`).test(state)) problems.push(`state.md: state file example has no "${s}" entry`);
 if (!/`stale`/.test(skill)) problems.push("SKILL.md: state vocabulary must include stale");
+if (!/references\/state\.md/.test(skill)) problems.push("SKILL.md: does not point at references/state.md");
+
+// Routing: the policy is data, so the verifier reads the data and not the prose.
+// Every tier a rule names must exist in the ladder, every weight must name a
+// question the router actually asks, and the bands must climb.
+(function routing() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) { problems.push("dstack.config.example.json: missing, routing policy cannot be checked"); return; }
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); }
+  catch (e) { problems.push(`dstack.config.example.json: not valid json (${e.message})`); return; }
+  const r = cfg.routing;
+  if (!r) { problems.push("dstack.config.example.json: no routing block"); return; }
+
+  const providers = Object.keys(require("./jev.cjs").PROVIDERS);
+  for (const [block, b] of [["routing", r], ["triage", cfg.triage]]) {
+    if (b && b.provider && !providers.includes(b.provider)) problems.push(`${block}: provider "${b.provider}" is not one jev.cjs serves (${providers.join(", ")})`);
+  }
+
+  const order = r.ladderOrder || [];
+  if (order.length < 2) problems.push("routing: ladderOrder needs at least two tiers");
+  for (const t of order) if (!r.tiers || !r.tiers[t]) problems.push(`routing: ladderOrder names "${t}", which tiers does not define`);
+
+  for (const [stage, rule] of Object.entries(r.stages || {})) {
+    if (rule.kind === "binary") {
+      if (!rule.question) problems.push(`routing: stage ${stage} is binary with no question`);
+      if (typeof rule.appliesAtOrAbove !== "number") problems.push(`routing: stage ${stage} has no numeric appliesAtOrAbove`);
+      continue;
+    }
+    for (const key of ["floor", "default", "ceiling"]) {
+      if (!rule[key]) { problems.push(`routing: stage ${stage} has no ${key}`); continue; }
+      if (!order.includes(rule[key])) problems.push(`routing: stage ${stage}.${key} is "${rule[key]}", not a tier in the ladder`);
+    }
+    if (rule.floor && rule.ceiling && order.indexOf(rule.ceiling) < order.indexOf(rule.floor))
+      problems.push(`routing: stage ${stage} has ceiling "${rule.ceiling}" below floor "${rule.floor}"`);
+    if (rule.skipAtOrBelow && !order.includes(rule.skipAtOrBelow)) problems.push(`routing: stage ${stage}.skipAtOrBelow is "${rule.skipAtOrBelow}", not a tier in the ladder`);
+    // A default below the floor would make a router failure cheaper than a
+    // successful route, which is the one thing routing must never be.
+    if (rule.floor && rule.default && order.indexOf(rule.default) < order.indexOf(rule.floor))
+      problems.push(`routing: stage ${stage} defaults to "${rule.default}", below its own floor "${rule.floor}": a router failure would buy less than a success`);
+  }
+
+  for (const [surface, tier] of Object.entries(r.surfaceFloors || {})) {
+    if (surface.startsWith("$")) continue;
+    if (!order.includes(tier)) problems.push(`routing: surfaceFloors.${surface} is "${tier}", not a tier in the ladder`);
+  }
+
+  // The catalog. A tier no model serves is a stage that can route nowhere, and
+  // a price that is a string ranks as unpriced without anyone noticing.
+  const models = Object.entries(r.models || {}).filter(([id]) => !id.startsWith("$"));
+  if (!models.length) problems.push("routing: the models catalog is empty, so no stage can pick a model");
+  const served = new Set();
+  for (const [id, m] of models) {
+    // An empty serves list is legal and means inert: in the catalog, trusted
+    // with nothing, unpickable until a person writes that line. That is the
+    // state a newly added model must arrive in.
+    // serves is an array (every stage) or an object keyed by stage.
+    let lists;
+    if (Array.isArray(m.serves)) lists = { "*": m.serves };
+    else if (m.serves && typeof m.serves === "object") lists = m.serves;
+    else { problems.push(`routing: model ${id} has no serves list`); continue; }
+    for (const [stage, tiers] of Object.entries(lists)) {
+      if (!Array.isArray(tiers)) { problems.push(`routing: model ${id} serves.${stage} is not a list of tiers`); continue; }
+      if (stage !== "*" && stage !== "default" && !(r.stages || {})[stage]) problems.push(`routing: model ${id} names serves.${stage}, which is not a stage`);
+      for (const tier of tiers) {
+        if (!order.includes(tier)) problems.push(`routing: model ${id} serves "${tier}", not a tier in the ladder`);
+        else if (!m.disabled) served.add(tier);
+      }
+    }
+    for (const key of ["in", "out"]) {
+      if (m[key] != null && typeof m[key] !== "number") problems.push(`routing: model ${id}.${key} is ${typeof m[key]}, must be a number or null`);
+    }
+    if ((m.in == null) !== (m.out == null)) problems.push(`routing: model ${id} prices only one side, which cannot be estimated; set both or neither`);
+  }
+  for (const tier of order) if (!served.has(tier)) problems.push(`routing: no enabled model serves tier "${tier}"`);
+
+  for (const [stage, rule] of Object.entries(r.stages || {})) {
+    if (rule.kind === "binary") continue;
+    if (rule.pin && !r.models[rule.pin]) problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which the catalog does not define`);
+    if (rule.pin && r.models[rule.pin] && !require("./route.cjs").servesTier(r.models[rule.pin], rule.floor, stage))
+      problems.push(`routing: stage ${stage} is pinned to "${rule.pin}", which does not serve that stage's floor "${rule.floor}"`);
+    // A stage must say what kind of work it is, or the router cannot tell an
+    // agent from a text model and will happily pick one that cannot do the job.
+    const kinds = Object.values(r.runners || {}).map((x) => x && x.kind).filter(Boolean);
+    if (!rule.needs) problems.push(`routing: stage ${stage} does not declare needs, so the router cannot tell which runners can do its work`);
+    else {
+      for (const k of (Array.isArray(rule.needs) ? rule.needs : [rule.needs])) {
+        if (!kinds.includes(k)) problems.push(`routing: stage ${stage} needs "${k}", which no runner declares`);
+      }
+      // The gate printing "none" is this: every tier in range must have at
+      // least one enabled model that both serves it and can do the work.
+      const exec = require("./exec.cjs");
+      for (let i = order.indexOf(rule.floor); i <= order.indexOf(rule.ceiling); i++) {
+        const tier = order[i];
+        const any = Object.entries(r.models || {}).some(([id, m]) =>
+          !id.startsWith("$") && m && !m.disabled &&
+          require("./route.cjs").servesTier(m, tier, stage) &&
+          exec.runnerCanDo(m, rule, r));
+        if (!any) problems.push(`routing: stage ${stage} at tier "${tier}" has no enabled model that both serves it and can do ${JSON.stringify(rule.needs)} work`);
+      }
+    }
+    if (!rule.typical) { problems.push(`routing: stage ${stage} has no typical shape, so models cannot be ranked on cost`); continue; }
+    for (const key of ["in", "out"]) {
+      if (typeof rule.typical[key] !== "number") problems.push(`routing: stage ${stage}.typical.${key} is not a number`);
+    }
+  }
+
+  let prev = -Infinity;
+  for (const b of r.bands || []) {
+    if (!order.includes(b.tier)) problems.push(`routing: a band names tier "${b.tier}", not in the ladder`);
+    if (b.upTo <= prev) problems.push(`routing: bands must climb, ${b.upTo} follows ${prev}`);
+    prev = b.upTo;
+  }
+
+  // Every weighted name must be a question the router asks, or it silently
+  // contributes nothing and the index quietly means something else.
+  let asked = new Set();
+  try {
+    const route = require("./route.cjs");
+    for (const set of Object.values(route.QUESTION_SETS)) for (const k of Object.keys(set)) asked.add(k);
+  } catch (e) { problems.push(`route.cjs: does not load (${e.message})`); }
+  for (const name of Object.keys(r.weights || {})) {
+    if (name.startsWith("$")) continue;
+    if (!asked.has(name)) problems.push(`routing: weights name "${name}", which no question asks`);
+  }
+  for (const [stage, rule] of Object.entries(r.stages || {})) {
+    if (rule.kind === "binary" && rule.question && !asked.has(rule.question))
+      problems.push(`routing: stage ${stage} decides on "${rule.question}", which no question asks`);
+  }
+})();
+
+// The skill must tell the reader where the routing contract lives.
+if (!/references\/routing\.md/.test(skill)) problems.push("SKILL.md: does not point at references/routing.md");
+if (!/references\/triage\.md/.test(skill)) problems.push("SKILL.md: does not point at references/triage.md");
+if (!/references\/retro\.md/.test(skill)) problems.push("SKILL.md: does not point at references/retro.md");
+
+// Retro: the refusal has to be real, not described. The minimums must be
+// numbers, and the pure function must actually withhold a finding below them.
+(function retro() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
+  const t = cfg.retro;
+  if (!t) { problems.push("dstack.config.example.json: no retro block"); return; }
+  if (!Number.isInteger(t.minPerGroup) || t.minPerGroup < 2) problems.push("retro: minPerGroup must be an integer of at least 2");
+  if (typeof t.minDifference !== "number" || t.minDifference < 0 || t.minDifference > 1) problems.push("retro: minDifference must be a proportion between 0 and 1");
+  if (!Number.isInteger(t.minPairs) || t.minPairs < 2) problems.push("retro: minPairs must be an integer of at least 2");
+  const contract = read("references/retro.md");
+  if (!/not a significance test/i.test(contract)) problems.push("retro.md: must say plainly that this is not a significance test");
+  if (!/does not carry its sample count is not a finding/.test(contract)) problems.push("retro.md: does not state the refusal");
+  try {
+    const mod = require("./retro.cjs");
+    // Four rows against a minimum of twelve must withhold, whatever else changes.
+    const rows = [];
+    for (let i = 0; i < 4; i++) { rows.push({ t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "skim", model: "m" }, { t: "outcome", pr: i, head: `h${i}`, blocked: true }); }
+    for (let i = 10; i < 40; i++) { rows.push({ t: "decision", pr: i, head: `h${i}`, stage: "build", tier: "deep", model: "m" }, { t: "outcome", pr: i, head: `h${i}`, blocked: false }); }
+    const res = mod.fit(rows, { retro: t });
+    const f = res.findings.find((x) => /tier a change was built at/.test(x.question));
+    if (!f || f.enough !== false) problems.push("retro: fit() reported on a group below minPerGroup, which S9 forbids");
+    for (const x of res.findings) if (typeof x.n !== "number") problems.push("retro: fit() emitted a finding with no sample count");
+    // The defect this check exists for: Retro was merged as a reader with no
+    // writer. Every row type it reads must have a contract that produces it,
+    // or the question that row answers is unanswerable and nobody notices,
+    // because the report says "not enough evidence yet" either way.
+    // The message says stages.md, so the check reads stages.md. Concatenating
+    // pr-evidence.md let the producer live somewhere the message forbids,
+    // which is the same defect one level up: a rule stated but not enforced.
+    const contracts = read("references/stages.md");
+    for (const type of mod.TYPES) {
+      if (!new RegExp(`retro\\.cjs --record ${type}\\b`).test(contracts))
+        problems.push(`retro: nothing produces a "${type}" row. A contract in stages.md must name "retro.cjs --record ${type}", or the questions it feeds can never be answered.`);
+      // A sixth row type added without required fields is this class returning
+      // under a new name, so the schema is required to keep pace with TYPES.
+      const req = mod.ROW_SCHEMA[type] && mod.ROW_SCHEMA[type].required;
+      if (!req || typeof req !== "object" || !Object.keys(req).length || !Object.values(req).every((v) => ["string", "number", "boolean"].includes(v)))
+        problems.push(`retro: row type "${type}" declares no required fields, so an unusable row of that type can be written`);
+    }
+  } catch (e) { problems.push(`retro.cjs: does not load (${e.message})`); }
+})();
+
+// A runner that reaches a paid service needs a credential named somewhere, and
+// the routing block's key is the measuring model's, not the runner's. Those
+// were the same key only while both went through one gateway; silently reusing
+// it is a 401 at the stage from a config that reads as consistent.
+(function runnerCredentials() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
+  const r = cfg.routing || {};
+  const used = new Set(Object.entries(r.models || {})
+    .filter(([id, m]) => !id.startsWith("$") && m && !m.disabled && m.runner)
+    .map(([, m]) => m.runner));
+  for (const runner of used) {
+    const declared = (r.runners || {})[runner] || {};
+    if (declared.kind !== "text") continue;
+    const named = declared.apiKeyEnv || r.apiKeyEnv;
+    if (!named) problems.push(`routing: runner "${runner}" is a text runner with no apiKeyEnv, so nothing says which credential reaches it`);
+    if (r.provider && r.provider !== "vercel" && !declared.apiKeyEnv) {
+      problems.push(`routing: the measuring provider is "${r.provider}" but text runner "${runner}" has no apiKeyEnv of its own, so it would inherit the measuring model's key and fail against a different service`);
+    }
+  }
+})();
+
+// A routing invocation without --head writes an artifact Retro cannot
+// attribute, so the decision is silently dropped from every rate.
+for (const m of (read("references/stages.md").match(/route\.cjs --stage \w+[^`]*/g) || [])) {
+  if (!/--head/.test(m)) problems.push(`stages.md: "${m.trim()}" does not pass --head, so its artifact cannot be attributed to a commit`);
+}
+
+// The router naming a model and something running it are different things.
+// Without a contract that executes, routing is advice and the stage runs
+// whatever it always ran, which is how a catalog of unreachable models went
+// unnoticed.
+if (!/exec\.cjs/.test(read("references/stages.md")))
+  problems.push("exec: no contract names exec.cjs, so nothing runs the model the router picks");
+if (!/catalog\.cjs[^`]*--check/.test(read("references/stages.md")))
+  problems.push("catalog: no contract runs --check, so an unreachable model stays in the ranking until a stage fails on it");
+
+// Prices go stale the day a provider changes them. Something must say when to
+// check, or catalog.cjs is a tool nobody is told to run.
+if (!/catalog\.cjs/.test(read("references/stages.md") + skill))
+  problems.push("catalog: no contract names catalog.cjs, so nothing says when to check prices against the gateway");
+
+// Triage: thresholds must be numbers in range, and the invariant has to be
+// stated where a reader of the contract will hit it.
+(function triage() {
+  const cfgPath = path.join(root, "..", "dstack.config.example.json");
+  if (!fs.existsSync(cfgPath)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch { return; }
+  const t = cfg.triage;
+  if (!t) { problems.push("dstack.config.example.json: no triage block"); return; }
+  const ranges = [
+    ["infra.treatAsInfraAtOrAbove", t.infra && t.infra.treatAsInfraAtOrAbove],
+    ["findings.inScopeAtOrAbove", t.findings && t.findings.inScopeAtOrAbove],
+    ["findings.guardedAtOrAbove", t.findings && t.findings.guardedAtOrAbove],
+    ["progress.sameIdeaAtOrAbove", t.progress && t.progress.sameIdeaAtOrAbove],
+    ["classHits.rankAtOrAbove", t.classHits && t.classHits.rankAtOrAbove],
+    ["plan.requireAtOrAbove", t.plan && t.plan.requireAtOrAbove],
+  ];
+  for (const [name, v] of ranges) {
+    if (typeof v !== "number") problems.push(`triage: ${name} is not a number`);
+    else if (v < 0 || v > 1) problems.push(`triage: ${name} is ${v}, must be a probability between 0 and 1`);
+  }
+  for (const [name, v] of [["findings.maxFindings", t.findings && t.findings.maxFindings], ["classHits.maxHits", t.classHits && t.classHits.maxHits]]) {
+    if (!Number.isInteger(v) || v < 1) problems.push(`triage: ${name} must be a positive integer cap`);
+  }
+  const contract = read("references/triage.md");
+  if (!/may only ever add work or add caution/.test(contract)) problems.push("triage.md: does not state the invariant");
+  try {
+    const mod = require("./triage.cjs");
+    const verdicts = new Set();
+    for (const v of [0.05, 0.5, 0.95]) verdicts.add(mod.judgePlan(Object.fromEntries(Object.keys(mod.PLAN_QUESTIONS).map((k) => [k, { type: "noul", noul: v }])), {}).verdict);
+    for (const bad of ["ready", "approved", "pass"]) if (verdicts.has(bad)) problems.push(`triage: judgePlan can return "${bad}", which would let a reading approve a plan`);
+  } catch (e) { problems.push(`triage.cjs: does not load (${e.message})`); }
+})();
 
 function report() {
   if (problems.length) {
@@ -112,7 +376,7 @@ function report() {
     for (const p of problems) console.error("  - " + p);
     process.exit(1);
   }
-  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical`);
+  console.log(`Dstack skill check OK: ${files.length} files, description ${desc.length} chars, SKILL.md ${words} words, ${ROUTES.length} stages routed and contracted, stop rules identical, routing, triage and retro policy resolve`);
   process.exit(0);
 }
 report();

@@ -14,6 +14,8 @@ Two rules carry most of the weight:
 
 **A test does not count until it has been seen to fail.** Every regression proof mutates the fix back out, watches the test go red for the stated reason, and restores it. A green suite proves the suite ran. It does not prove the suite is watching anything.
 
+**A decision made on a proxy is not a measurement.** A plan review used to be skipped when a change was "under twenty lines", and browser verification used to be skipped when no file under `client/` was touched. A twelve line change to session handling is skippable under the first. A server side change that alters what a customer sees is invisible to the second. Both are now measured instead of guessed, and the measurement is written on the pull request.
+
 **A blocked round is a hypothesis, not a verdict.** Findings get adjudicated against source, not accepted because a model was confident. On a measured sample, a cross-model review produced two blockers that would genuinely have shipped and thirteen rejected findings, two of them rated blocker and guarded on the very next line.
 
 ## The nine stages
@@ -32,6 +34,79 @@ Two rules carry most of the weight:
 
 Each stage declares who runs it, what it needs, what it produces, what the owner reads, and the one condition that stops the line. The stop rules are canonical text held byte-identical in two files, and a verifier fails if they ever drift apart.
 
+## What each stage costs
+
+Every stage used to cost the same. The builder ran at medium effort and the gate ran at the top rung, whether the change was a typo fix or a rewrite of the billing path.
+
+Stages that spend now measure the change first, in a single call to a [System One model](https://typesafe.ai/blog/introducing-system-one-models-and-jev): how far it reaches, how hard it is to undo, how much it leaves to judgment, whether it touches authentication or money, and whether it follows a pattern already in the codebase. Those readings become a risk index, the index falls into a band, and the band names a tier.
+
+The split that matters is that **the model measures and the config prices, and they are different files**. No model name, effort level or price appears in a question, so the question set does not go stale when the lineup turns over. Which model runs a deep review is a line in `dstack.config.json`.
+
+Four rules bound it, and the fixtures in `skill/scripts/route.test.cjs` prove each one with no network and no API key:
+
+- **It never turns a gate into a pass.** Routing sets what a review costs. It has no opinion on the verdict.
+- **It never fails cheap.** No key, a timeout, a rate limit, a bad response: every one routes to the stage default, which is the tier Dstack used before routing existed. A failure buys what you had before, never less.
+- **It never fails quietly.** Every failure carries a sentence, and the sentence reaches the pull request body.
+- **It never sends the diff.** Paths, counts and the plan's own prose leave the machine. Source contents do not, and no setting turns that on.
+
+Uncertainty routes up, never down: a reading the model is not confident about costs a rung. Floors only ever raise, and there are deliberately no ceilings per surface, because a documentation change that measures as high risk is a misclassification and capping it would be the silent downgrade this whole process exists to remove.
+
+A tier is a class of work, not a model. Which model serves a tier is a line in your catalog, and the router never writes it:
+
+```json
+"claude-sonnet-5": { "in": 3.00, "out": 15.00, "serves": ["skim", "standard", "deep"] }
+```
+
+`serves` is your statement of what you trust a model with. All the router does is pick the cheapest model you already said could do the job, which is why this lowers a bill and cannot lower a standard. Cheapest is computed per stage, because the shape of the work decides it: a gate reads 80k tokens and writes 6k, a build writes 20k, and a model with cheap input and dear output wins one and loses the other. `node scripts/route.cjs --explain` prints the whole comparison.
+
+The full contract is in [skill/references/routing.md](skill/references/routing.md). Routing is optional: one key turns it off and every stage returns to a fixed effort.
+
+## Reading the review, not the code
+
+Gate is the most expensive stage and the one that wastes the most. A round that died on a network timeout is read as a round. Every finding is adjudicated at the same weight, including the two in fifteen that were guarded on the very next line. And S3 asked whether the major count fell while comparing two lists that may not describe the same ideas.
+
+Triage answers the questions those rules assumed someone could answer: was this failure infra, which findings are worth reading first, which of them is the same idea the last round already raised, which grep hits share the defect's shape, and can this plan carry a review at all.
+
+One sentence makes it safe, and it is stop rule S8:
+
+> **A triage reading may only ever add work or add caution.**
+
+It labels and orders findings but never removes one. It raises a severity but never lowers one a reviewer assigned. It holds a plan back but has no verdict that means approved. An unsure infra reading costs a retry. Every failure returns the input unchanged and says so. Six fixtures hold that invariant, and the verifier fails if the plan judgement ever grows a verdict that means yes.
+
+Contract in [skill/references/triage.md](skill/references/triage.md).
+
+## The numbers are guesses, and Retro is what corrects them
+
+Five routing weights. Four bands. Eight surface floors. Six triage thresholds. Three token shapes. Three claims about what a given model can be trusted to do. Every one of them was set by hand, every one is stated as a guess in the contract that carries it, and until Retro nothing observed whether any of them was right.
+
+Retro is a ledger and an analysis. Every routed decision and every gate round leaves an append-only row, and one command reads them back and says which numbers in your config the evidence disagrees with. It answers five questions: does the tier predict a block, does the model matter at a fixed tier, do the triage labels hold against source, are the token shapes right, and does the risk index predict rounds.
+
+Most of the value is in what it refuses to say. Stop rule S9:
+
+> **A finding that does not carry its sample count is not a finding.**
+
+Five rows will always produce a difference that looks like signal, and the damage is not a wrong number on a screen: it is someone editing a safety floor because of one. So a comparison is reported only when every group has enough rows and the spread is large enough to matter, the minimums live in the pure function rather than in the documentation, and there is deliberately no flag that relaxes them. The only reason to reach for such a flag is to get an answer you had already decided on.
+
+The expected first run is every line reading "not enough evidence yet, this needs N more". That is the correct output, not a failure.
+
+Two things it does not do. It never edits a threshold: it reports, and a person changes the config, because a process that tunes its own safety thresholds from its own small sample will talk itself into anything. And it is **not a significance test**, which `skill/references/retro.md` says in those words. It is rates and differences with sample counts beside them, a tripwire rather than a study.
+
+## What has run, and what has only been reviewed
+
+Worth separating, because five rounds of adversarial review made the difference plain. Twenty findings landed like this:
+
+| | Findings | Has it run? |
+|---|---|---|
+| Routing | 0 | yes, live against the gateway |
+| Exec | 7 | yes, live twice |
+| Retro | 13 | **no** |
+
+Routing and Exec have measured and executed real changes. Retro has not. Its ledger failed to answer its own five questions in three separate ways, and every time the symptom was identical: the report said "not enough evidence yet", which is exactly what a healthy young ledger prints. Review caught all three; nothing else could have.
+
+So Retro ships **recording but not trusted**. Its collection is append-only and harmless, and rows should accumulate from today so that evidence exists when it is time to believe it. Its `--fit` output should not be acted on until one real delivery cycle has written rows through it end to end. The same caution applies to Triage, which is built and reviewed and has likewise never run in a real gate.
+
+That distinction is the point of this whole repository, turned on itself: proven by fixtures and proven in use are different claims, and only one of them was earned here.
+
 ## Status
 
 Under construction, in the open. Plan 1 (the skill shell) is written, reviewed across three adversarial rounds, and dry-run proven. Plans 2 through 6 are not written yet.
@@ -43,7 +118,10 @@ Under construction, in the open. Plan 1 (the skill shell) is written, reviewed a
 | 3 | Parallel gate runner with infrastructure retry | Not started |
 | 4 | See it: real browser evidence | Not started |
 | 5 | Watch: deploy observation | Not started |
-| 6 | Retro: metrics that close the loop | Not started |
+| 6 | Retro: the ledger that corrects the guesses | Built and reviewed, **not yet exercised** |
+| 7 | Jev routing: measured tiers, model catalog, and the end of proxy heuristics | Built, reviewed, run live |
+| 8 | Triage: infra verdicts, finding ranking, distinct-idea progress | Built and reviewed, **not yet exercised** |
+| 9 | Exec: run the model the router picks, refuse what cannot do the work | Built, reviewed, run live |
 
 Plans and their full review logs live in [docs/plans](docs/plans). The argument is the artifact; it is kept whole on purpose.
 
@@ -53,6 +131,8 @@ Requires [Claude Code](https://claude.com/claude-code) and [Node.js](https://nod
 [`codex`](https://github.com/openai/codex) for planning review and gating, [`grok`](https://x.ai) for the product and operations lens, [`gemini`](https://github.com/google-gemini/gemini-cli) for breadth and screenshots.
 
 A missing CLI is announced once and that route is skipped. A missing CLI never silently downgrades a gate to a pass.
+
+Routing additionally needs a key for the System One model that decides what each stage costs, reached either through the Vercel AI Gateway (`AI_GATEWAY_API_KEY`, model `typesafe-ai/jev`) or from TypeSafe directly (`TYPESAFE_API_KEY`). It is optional. Without it, every stage runs at the fixed effort it used before routing existed, and says so.
 
 ```bash
 git clone https://github.com/DevinRobinson1/dstack.git

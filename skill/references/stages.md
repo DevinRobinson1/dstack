@@ -16,7 +16,9 @@ Read the section for the stage you are running. Each has: who does it, what it n
 **Needs:** `stages.intake.state = done` and `.dstack/work-order.json`.
 **Produces:** the plan at `docs/superpowers/plans/<YYYY-MM-DD>-<name>.md` and its review log at `<same>.review-log.md`, both committed on the lane branch in a commit whose message starts `plan:`, so Build's clean-tree check passes; `stages.plan` with `codex_review` (`APPROVED` or `skipped`) and `owner_yes`; and `plan_file` at the top of the state file. The plan contains, in this order, each non-empty: Claim, Class, Change, Proof command (with the guarantee list), Flows (or the line `Flows: none, no client/ change`), Out of scope, Acceptance, Risks and prerequisites (or `none identified`), Rollback.
 **Owner reads:** Claim, Flows, Acceptance, and Risks and prerequisites. They say yes or no, and the yes is stamped into the state file.
-**Stop:** S1.
+**Stop:** S1, S7.
+
+**Routing:** before the review is commissioned, `route.cjs --stage plan --head <sha>` measures the change. At or below `skipAtOrBelow` the adversarial review is skipped and `codex_review: skipped` is recorded with the reason; above it, the review runs at the tier named. The owner’s yes is required either way and is never routed.
 
 Detail on the sections:
 1. **Claim**, one paragraph, in the words the customer or the owner would use: what they will observe that they cannot observe today.
@@ -39,7 +41,11 @@ Route: `/grill-me-codex` when any design question is open; `/codex-review` when 
 **Owner reads:** nothing. Prove is what makes this safe.
 **Stop:** S1. A dirty tree also stops it before it starts. Codex never commits, and nothing is committed in this stage at all.
 
-How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-m gpt-5.6-sol -c model_reasoning_effort="medium"` (builds run on GPT-5.6 Sol, never Astra). Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
+**Routing:** `route.cjs --stage build --head <sha>` chooses the effort, capped below the top rung: if a build needs the top rung, the plan was not finished. Build declares `needs: "agent"`, so only a runner that can edit files and read back what changed is eligible. A text model is not a cheaper builder, it is not a builder: it returns a string describing edits it did not make.
+
+**Executing:** `node scripts/exec.cjs --decision .dstack/routing/build-<sha>.json --prompt-file <f>` runs whatever the router picked, or refuses with a reason and falls back. A refusal is recorded and printed on the PR; it is never a silent downgrade.
+
+How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-c model_reasoning_effort="<the routed effort>"`. Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
 
 ## 4. Prove
 
@@ -48,6 +54,10 @@ How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_C
 **Produces:** in this order, all owned by this stage: the proof ledger; the baseline proof (the plan's proof command run by Claude, with its verbatim summary line); observed results against each Acceptance line; the commit on the lane branch with the attribution line; the push; the PR, created or updated, with its body per `references/pr-evidence.md` (stages after Prove are written as `pending` at creation); and `stages.prove` with `head`, `guarantees`, `seen_to_fail`, `tool`.
 **Owner reads:** "6 guarantees, 6 seen to fail, on <short sha>, proof command green." If it is 5 of 6, the ledger names the sixth and why, and the Claim no longer promises it.
 **Stop:** S2.
+
+**Retro:** after the PR exists, `node scripts/retro.cjs --collect --pr N` reads the routing artifacts and appends one `retro.cjs --record decision` row and one `retro.cjs --record usage` row per routed stage. Each row carries the head from its own artifact. It is deliberately not filtered by a head given here: Build routes against the pre-build commit and Prove collects after committing, so filtering on the collecting head dropped every Build decision and silently emptied the two questions that judge a tier and a model. A stale artifact keeps its own head and joins to no outcome of this PR.
+
+A usage row says whose tokens it counted. The router's measurement and the chosen runner's work are both in the artifact, and only the runner's describes the stage: recording the router's made question 4 answer about Jev.
 
 How:
 - Read the full diff against the plan. Anything outside the plan's Change section is a deviation and is named in the PR body.
@@ -60,24 +70,36 @@ How:
 
 ## 5. Gate
 
-**Who:** Codex (config default, xhigh), Grok, and Gemini, in parallel, on the diff. Claude adjudicates. Three lenses, and the assignment is the point: Codex on code-path correctness, Grok on whether it works for a real operator and what breaks on deploy, Gemini on breadth, meaning "is this defect somewhere else too". Asking all three the same generic question buys one answer three times.
+**Who:** Codex (config default, xhigh), Grok, and Gemini, in parallel, on the diff. Claude adjudicates.
+
+Three lenses, and the assignment is the point: Codex on code-path correctness, Grok on whether this works for a real operator and what breaks on deploy, Gemini on breadth, meaning "is this defect somewhere else too". Ask all three the same generic question and you pay three times for one answer.
+
+Gemini is at Gate for the reason the `needs: ["text", "agent"]` note below already gives: an agent greps its way around the repository and sees code the diff does not show. That is also the independent check on the class rule, which Claude otherwise applies to its own code as both author and auditor. Measured on the change that added it: the other two passed a diff whose entire subject was one defect copied across three sites, and Gemini found a fourth instance in another subsystem that the author's own class grep had missed, because that grep searched for the two shapes it already knew.
+
+**Ask Gemini for the negative result, in the prompt:** "if there is no other instance, say so and say what you searched." The sweep that finds nothing is half of what it is for, and without that sentence a silent report is indistinguishable from a pass.
 **Needs:** `stages.prove.state = done`, a pushed branch whose head equals `stages.prove.head`, a PR body with the Proof ledger section non-empty, and `shop.config.json` with `autoMergeOnPass` false or absent (if true, refuse under S6).
-**Produces:** the round directory `.4-brain-out/<date>-pr<N>/round-<n>/` with `verdict.json`, and the three reviews at the paths `verdict.json` names in `codex.reviewFile`, `grok.reviewFile` and `gemini.reviewFile`, all of which must exist; a PR comment with PASS or BLOCK, the major count, one line per major, and the class-rule answers if BLOCK; and `stages.gate` with `round`, `majors`, `head`, `runner`, `concurrency`. The PR Gate line also states the runner: `three-wide runner: not_built; review-loop3.sh, concurrency 1` until Plan 3 lands. A reviewer that cannot run is recorded by name in `stages.gate.missing` and said out loud, never silently dropped.
+**Produces:** the round directory `.4-brain-out/<date>-pr<N>/round-<n>/` with `verdict.json`, and the three reviews at the paths `verdict.json` names in `codex.reviewFile`, `grok.reviewFile` and `gemini.reviewFile`, all of which must exist; a PR comment with PASS or BLOCK, the major count, one line per major, and the class-rule answers if BLOCK; and `stages.gate` with `round`, `majors`, `head`, `runner`, `concurrency`. The PR Gate line also states the runner: `three-wide runner: not_built; review-loop3.sh, concurrency 1` until Plan 3 lands. A reviewer that cannot run is named in `stages.gate.missing` and said out loud on the PR, never silently dropped: a two-wide round that reads as three-wide is a round that claims coverage it does not have.
 **Owner reads:** PASS or BLOCK, the major count, one sentence per major.
-**Stop:** S3, S4, S6.
+**Stop:** S3, S4, S6, S7.
 
-How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile`, `grok.reviewFile` and `gemini.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
+**Retro:** every round ends with `node scripts/retro.cjs --record outcome pr=N head=<sha> round=<n> majors=<n> distinct=<n> blocked=<true|false> infra=<true|false>`. An infra round is recorded with `infra=true` and is excluded from every rate, per S4. After adjudicating, one row per finding: `node scripts/retro.cjs --record adjudication pr=N label=<major|minor|questioned> confirmed=<true|false>`, where `confirmed` means it survived contact with source. Those rows are the only thing that can ever answer whether a tier, a model, or a triage label is doing anything.
 
-Ask Gemini for its negative result explicitly, in the prompt: "if there is no other instance of this, say so and say what you searched." Its value is as much the sweep that found nothing as the finding, and without that instruction a silent report reads like a pass.
+**Triage:** `triage.cjs` classifies a failed run as infra before the round is counted (S4), labels and orders every finding without removing any (S8), and counts distinct ideas for S3's comparison. The gate comment prints findings in, distinct ideas, and how many triage did not read.
 
-A reviewer's verdict is adjudicated, never obeyed. **A finding about code the diff does not touch is real and is filed, not fixed here**, so it does not count toward the round's majors and does not hold the PR. Gemini's breadth lens finds these most often by design, since it is looking outside the diff on purpose; treating its BLOCK as authoritative would stall every PR on pre-existing debt.
+**Executing:** `node scripts/exec.cjs --decision .dstack/routing/gate-<sha>.json --prompt-file <f>` runs the chosen reviewer. Gate declares `needs: ["text", "agent"]` because both are real reviews and they are not equal: an agent greps its way around the repository and sees code the diff does not show, which is where the subtle findings live. A text reviewer sees only what you hand it, so weigh that before writing a `serves` line for one at Gate.
+
+**Routing:** `route.cjs --stage gate --head <sha>` chooses the reviewer's effort. The gate floor means a cheap measurement can never buy a shallow review, and no measurement can lower a verdict.
+
+How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile` and `grok.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
 
 On BLOCK: read each reviewer's findings as they land and begin the class rule on them. Edit nothing until all three reviews are in against the same head. Then answer the four class-rule questions in the PR comment, fix every in-scope finding in the round (majors and minors), then Prove again (which marks Gate `stale` and re-runs), then Gate again.
+
+**A verdict is adjudicated, never obeyed, and a breadth reviewer makes that rule load-bearing.** A finding about code this diff does not touch is real and is filed for its own change; it is not fixed here, because widening a PR to chase pre-existing debt is how a narrow claim stops being provable. It stays on the list the adjudicator reads and keeps the severity its reviewer gave it, which is S8 untouched. What it does not do is count toward S3's in-scope comparison or hold the PR. Gemini surfaces these most often by design, since looking outside the diff is its whole assignment, so a round where it returns BLOCK on nothing but out-of-diff findings is a PASS with filings, and the PR comment says exactly that.
 
 ## 6. See it
 
 **Who:** a real browser drives the app on the lane. Gemini judges the screenshots against the plan's Flows. Claude adjudicates Gemini the way it adjudicates Codex and Grok.
-**Needs:** `stages.gate.state = pass` at the current head, and the plan's Flows section. If the diff touches nothing under `client/`, this stage writes `not_applicable` with the reason and returns; that needs no yes.
+**Needs:** `stages.gate.state = pass` at the current head, and the plan's Flows section. Routing decides whether this stage applies: `route.cjs --stage see --head <sha>` asks whether a customer would notice, and below the configured mark this stage writes `not_applicable` with the probability as its reason and returns; that needs no yes. With routing off, the fallback is the old test, a diff that touches nothing under `client/`. An unknown always runs.
 **Produces:** per named flow: a before screenshot, an after screenshot, Gemini's one-paragraph read, and pass or fail, attached to the PR under the See it section; and `stages.see` with `head`, `flows`, `passed`, `failed`.
 **Owner reads:** the screenshots. The one stage where they judge the work directly.
 **Stop:** see "What Ship accepts" below, enforced by Ship's pre-flight.
@@ -93,6 +115,8 @@ What Ship accepts from See it, exhaustively: `pass` at the current head with `fl
 **Produces:** the merge, then four outcomes reported as separate states in the merge report and in `stages.ship`: `merge` (with the squash sha and per-file containment), `ticket` (`resolved`, `pending`, `not-applicable`, `partial-fix`, or `unknown`), `email` (`sent`, `queued`, `failed`, `not-applicable`, or `unknown`), and `deploy` (`unknown` until Watch exists).
 **Owner reads:** the merge list page, one row per PR: claim, proof line, verdict, ticket outcome, email outcome, deploy state.
 **Stop:** S5, S6.
+
+**Retro:** after the merge, `node scripts/retro.cjs --record ship pr=N rounds=<real rounds, infra excluded> minutes=<intake to merge>`. This is the row question 5 pairs against the risk index.
 
 How, and what each step proves:
 1. `gh pr view N --json baseRefName` says `main`. Proves the base, nothing else.
@@ -115,22 +139,29 @@ How: `scripts/ci/deploy-watch.cjs` (Plan 5): `/api/health`, error rate, and the 
 ## 9. Retro
 
 **Who:** Claude, weekly or after a batch.
-**Needs:** `review-loop.log` and the gate ledger.
+**Needs:** the outcome ledger at `.dstack/retro/ledger.jsonl`, written by Prove, Gate and Ship as their contracts above say. Retro reads; it never backfills a row it was not given, because a row invented after the fact is not evidence.
 **Produces:** one table: rounds per PR, time per shipped PR, infra rate, PRs handed over and why, and the log line ranges the numbers came from; and `stages.retro`.
 **Owner reads:** the table. If rounds per PR are not falling within ten PRs of adopting Plan, the Plan stage is not working and the process changes.
 **Stop:** none.
 
-How: `scripts/ci/retro.cjs` (Plan 6). Until it lands, by hand from the log, and the table says so and cites the lines.
+How: `node scripts/retro.cjs --fit` prints, per question, a finding, a "nothing worth acting on", or how many more rows it needs. Per S9 it never reports below the configured minimum and never edits a threshold: a person changes the config.
+
+Also at Retro, check that the catalog is still true. `node scripts/catalog.cjs --config dstack.config.json --check` calls every priced model once and reports what actually answers: a model can be listed, priced and trusted and still refuse the account, in which case the router picks it and the stage fails. Reachability is a fact like price, not a claim like `serves`.
+
+And check the prices the whole cost ranking rests on: `node scripts/catalog.cjs --config dstack.config.json` reports any drift between the catalog and what the gateway actually charges, and `--write` applies it. Prices are facts and go stale silently; `serves` is a claim and is never touched. `--suggest --stage <stage>` ranks every model the gateway offers against that stage's real read and write shape.
 
 ## Stop rules
 
 Canonical. Identical to SKILL.md's block; the verifier fails if they differ.
 
 <!-- dstack-stop-rules-begin -->
-- **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change under twenty lines the Codex review may be skipped; the owner’s yes may never be skipped.
+- **S1 Plan.** No build starts unless BOTH are true: Codex wrote `VERDICT: APPROVED` on the plan, and the owner said yes. For a change Routing measures as skippable, or under twenty lines with routing off, the Codex review may be skipped; the owner’s yes may never be skipped.
 - **S2 Prove.** A mutation that stays green is a test that proves nothing. Fix the test or drop the guarantee. A dropped guarantee is removed from the plan's Acceptance and from the PR Claim in the same commit, and if Acceptance changed, Plan runs again for the owner’s yes.
-- **S3 Gate.** Compare each round's in-scope major count to the previous real round's. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
-- **S4 Gate.** An `infra` verdict is not a verdict. Retry once. If it is infra again, hold and say so in the state file.
+- **S3 Gate.** Compare each round's in-scope major count to the previous real round's, counted by distinct idea and not by finding when Triage can compare them. Infra rounds do not count as rounds. After two consecutive comparisons where the count did not fall, stop: hand over on the PR with two options and do not run a third.
+- **S4 Gate.** An `infra` verdict is not a verdict. Triage classifies a failed run before the round is counted, and an unsure reading is infra. Retry once. If it is infra again, hold and say so in the state file.
 - **S5 Ship.** A ticket-backed PR ships in exactly one of two ways. Closes-ticket: the marker from `ticket-directive.cjs --lookup FS-NN` is on the PR and matches the live id and customer message count. Partial-fix: no marker, and the PR body says why the ticket cannot close and what the customer must do, and the owner’s yes names it as a partial fix. Any other shape does not merge.
 - **S6 Ship.** Nothing merges on a conversation. Only the owner’s explicit say-so, only a gate PASS whose `head` equals the live PR head, only `--match-head-commit <full sha>`. The gate runner is invoked with auto-merge off, and Gate refuses to run if `shop.config.json` has `autoMergeOnPass` true.
+- **S7 Routing.** Routing decides what a stage costs, never what it concludes. A router that is missing, slow, or unsure routes to the stage default and says so on the PR. It never routes below a floor, never turns a BLOCK into a PASS, and never skips a stage the owner’s yes is required for. Uncertainty routes up, never down.
+- **S8 Triage.** A triage reading may only add work or add caution. It never removes a finding from the list the adjudicator reads, never lowers a severity a reviewer assigned, never approves a plan, and never turns an infra hold into a pass. An unsure reading resolves toward more work, and any failure returns the input unchanged and says so.
+- **S9 Retro.** A finding that does not carry its sample count is not a finding. Below the configured minimum per group, or a spread under the configured margin, Retro reports how much more evidence it needs and no finding at all. Retro never edits a threshold: it reports, and a person changes the config.
 <!-- dstack-stop-rules-end -->
