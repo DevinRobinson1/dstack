@@ -63,8 +63,6 @@
   "routing": {
     "$comment": "Jev decides what a stage costs, this file decides what that means. Questions describe the work and never name a model, so the question set does not go stale when the lineup changes. Read skill/references/routing.md before changing a number here.",
     "enabled": true,
-    "model": "typesafe-ai/jev",
-    "apiKeyEnv": "AI_GATEWAY_API_KEY",
     "timeoutMs": 6000,
     "escalateBelowConfidence": 0.7,
     "$comment_escalate": "A reading less certain than this routes one rung UP. Uncertainty costs money, never safety. Set to 0 to turn escalation off, which is not recommended.",
@@ -308,12 +306,14 @@
         "$comment": "Same argument, one rung further up on the generation side. Still nothing at Gate until Retro has outcome data saying a cheaper reviewer holds up."
       }
     },
-    "provider": "vercel",
-    "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead.",
+    "provider": "typesafe",
+    "$comment_provider": "TypeSafe direct, on TYPESAFE_API_KEY. Name the provider and nothing else: the model id and the key variable are properties of the provider, not of Jev, and jev.cjs picks both from it (TypeSafe is jev-latest on TYPESAFE_API_KEY, the Vercel gateway is typesafe-ai/jev on AI_GATEWAY_API_KEY). A config naming all three can drift apart, and both ways it has drifted read as correct: a TypeSafe key sent to Vercel (401), and the gateway model id sent to TypeSafe (400, Unknown model). Set model only to pin a version, and only for the provider it belongs to. The two providers are also different wire formats, a boolean where TypeSafe says noul and confidence on providerMetadata rather than on the answer; jev.cjs normalizes both.",
     "runners": {
       "$comment": "text: produces a string, so it can review, judge and summarize. agent: holds a tool loop with write access, so it can edit files and read back what changed. A text runner cannot do agent work however good the model is, and exec.cjs refuses the mismatch rather than letting a build return a paragraph describing the edits it would have made.",
       "gateway": {
-        "kind": "text"
+        "kind": "text",
+        "apiKeyEnv": "AI_GATEWAY_API_KEY",
+        "$comment": "Catalog models through the Vercel AI Gateway. Its own credential, deliberately not Jev's: Jev is on TypeSafe direct. This used to inherit routing.apiKeyEnv, which is how one key came to serve two services that each need their own."
       },
       "codex": {
         "kind": "agent",
@@ -349,8 +349,6 @@
   "triage": {
     "$comment": "Reading the review, not the code. See skill/references/triage.md. The invariant: a reading may only add work or add caution. Set enabled to false and every judgement returns its input unchanged.",
     "enabled": true,
-    "model": "typesafe-ai/jev",
-    "apiKeyEnv": "AI_GATEWAY_API_KEY",
     "timeoutMs": 6000,
     "infra": {
       "treatAsInfraAtOrAbove": 0.35,
@@ -377,8 +375,8 @@
       "requireAtOrAbove": 0.6,
       "$comment": "Returns not_ready or no_objection. There is no verdict that means approved."
     },
-    "provider": "vercel",
-    "$comment_provider": "Reached through the Vercel AI Gateway, which is a different wire format from TypeSafe direct: a boolean where TypeSafe says noul, and confidence on providerMetadata rather than on the answer. jev.cjs normalizes both. Set provider to typesafe with TYPESAFE_API_KEY to go direct instead."
+    "provider": "typesafe",
+    "$comment_provider": "TypeSafe direct, on TYPESAFE_API_KEY. Name the provider and nothing else: the model id and the key variable are properties of the provider, not of Jev, and jev.cjs picks both from it (TypeSafe is jev-latest on TYPESAFE_API_KEY, the Vercel gateway is typesafe-ai/jev on AI_GATEWAY_API_KEY). A config naming all three can drift apart, and both ways it has drifted read as correct: a TypeSafe key sent to Vercel (401), and the gateway model id sent to TypeSafe (400, Unknown model). Set model only to pin a version, and only for the provider it belongs to. The two providers are also different wire formats, a boolean where TypeSafe says noul and confidence on providerMetadata rather than on the answer; jev.cjs normalizes both."
   },
   "retro": {
     "$comment": "The ledger that corrects the guesses. See skill/references/retro.md. Rates with sample counts beside them, not a significance test. Retro never edits a threshold; it reports and you decide.",

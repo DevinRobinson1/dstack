@@ -23,9 +23,16 @@
 const https = require("https");
 const { URL } = require("url");
 
+// No `model` here, deliberately. The model id is a property of the PROVIDER, not
+// of Jev: TypeSafe direct calls it "jev-latest" and the Vercel gateway calls it
+// "typesafe-ai/jev". A global default had the gateway's spelling, and because
+// ask() merges DEFAULTS into every call, it filled cfg.model before either
+// provider's own fallback could run. Any caller that named provider "typesafe"
+// without also naming a model therefore sent the gateway's id to TypeSafe and got
+// "Unknown model: typesafe-ai/jev" back, a 400 from a config that read as correct.
+// Each provider now owns its default, in PROVIDERS below.
 const DEFAULTS = {
-  provider: "vercel",
-  model: "typesafe-ai/jev",
+  provider: "typesafe",
   timeoutMs: 6000,
   retries: 1,
 };
@@ -171,8 +178,16 @@ function post(url, body, headers, timeoutMs) {
 
 // ask(state, questions, opts) -> { ok, answers, usage, model, reason }
 // Never rejects. On any failure, ok is false and reason is a sentence.
+// The merge ask() performs, exported so a test can exercise the exact path that
+// was broken without a network call. Testing PROVIDERS.x.build() directly with a
+// hand-picked model skips this merge entirely, which is how the model-id defect
+// shipped with a green test beside it.
+function resolveConfig(opts) {
+  return Object.assign({}, DEFAULTS, opts || {});
+}
+
 async function ask(state, questions, opts) {
-  const cfg = Object.assign({}, DEFAULTS, opts || {});
+  const cfg = resolveConfig(opts);
   const provider = PROVIDERS[cfg.provider];
   if (!provider) return { ok: false, reason: `unknown routing provider "${cfg.provider}", expected one of ${Object.keys(PROVIDERS).join(", ")}`, answers: null, usage: null };
   const envName = cfg.apiKeyEnv || provider.apiKeyEnv;
@@ -231,4 +246,4 @@ function reading(answer) {
 function clamp01(n) { return Math.min(1, Math.max(0, Number(n) || 0)); }
 function num(v, fallback) { return Number.isFinite(Number(v)) ? Number(v) : fallback; }
 
-module.exports = { ask, reading, redact, readKey, DEFAULTS, PROVIDERS, ALLOWED_STATE_KEYS, CAPS };
+module.exports = { ask, reading, redact, readKey, resolveConfig, DEFAULTS, PROVIDERS, ALLOWED_STATE_KEYS, CAPS };

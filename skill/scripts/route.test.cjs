@@ -322,6 +322,31 @@ const CLIENT_CASES = [
       /runner "gw" needs/.test(withOwn.reason),
     ]);
   }],
+  // Goes through resolveConfig(), the merge ask() performs, rather than calling
+  // build() with a model the test chose. The test below this one passes
+  // { model: "jev-latest" } straight into build(), so it stayed green while a
+  // global DEFAULTS.model of "typesafe-ai/jev" overrode every real call and TypeSafe
+  // rejected it with "Unknown model". A test that picks the input the bug would
+  // have replaced cannot see the bug.
+  ["each provider sends its own model id when the caller names none", () => {
+    const q = { q: { type: "noul", instructions: "?" } };
+    const ts = jev.PROVIDERS.typesafe.build("s", q, jev.resolveConfig({ provider: "typesafe" }), "k");
+    const gw = jev.PROVIDERS.vercel.build("s", q, jev.resolveConfig({ provider: "vercel" }), "k");
+    // An explicit model still wins, so a project pinning a version keeps it.
+    const pinned = jev.PROVIDERS.typesafe.build("s", q, jev.resolveConfig({ provider: "typesafe", model: "jev-1.13.0" }), "k");
+    // route.cjs and triage.cjs pass `model: <config value>`, which is undefined
+    // when the config omits it. Object.assign copies undefined, so this must also
+    // resolve to the provider's own default rather than to nothing.
+    const omitted = jev.PROVIDERS.typesafe.build("s", q, jev.resolveConfig({ provider: "typesafe", model: undefined }), "k");
+    return [
+      ts.body.model === "jev-latest",
+      ts.body.model !== "typesafe-ai/jev",
+      gw.headers["ai-model-id"] === "typesafe-ai/jev",
+      pinned.body.model === "jev-1.13.0",
+      omitted.body.model === "jev-latest",
+      jev.DEFAULTS.model === undefined,
+    ];
+  }],
   ["the typesafe provider builds and parses its own wire format", () => {
     const built = jev.PROVIDERS.typesafe.build("s", { q: { type: "noul", instructions: "?" } }, { model: "jev-latest" }, "k");
     // TypeSafe direct takes the model in the body and keeps `noul` as `noul`.
