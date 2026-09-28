@@ -39,7 +39,7 @@ Route: `/grill-me-codex` when any design question is open; `/codex-review` when 
 **Owner reads:** nothing. Prove is what makes this safe.
 **Stop:** S1. A dirty tree also stops it before it starts. Codex never commits, and nothing is committed in this stage at all.
 
-How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-c model_reasoning_effort="medium"`. Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
+How: `/codex-build` with `SPEC_FILE` set to `plan_file` from the state, `PROOF_CMD` from the plan, and the build invocation carrying `-m gpt-5.6-sol -c model_reasoning_effort="medium"` (builds run on GPT-5.6 Sol, never Astra). Up to two fix rounds in the same Codex session. If both are spent, Claude finishes the build and the state records `"by": "claude", "reason": "codex fix rounds spent"`.
 
 ## 4. Prove
 
@@ -60,15 +60,19 @@ How:
 
 ## 5. Gate
 
-**Who:** Codex (config default, xhigh) and Grok, in parallel, on the diff. Claude adjudicates.
+**Who:** Codex (config default, xhigh), Grok, and Gemini, in parallel, on the diff. Claude adjudicates. Three lenses, and the assignment is the point: Codex on code-path correctness, Grok on whether it works for a real operator and what breaks on deploy, Gemini on breadth, meaning "is this defect somewhere else too". Asking all three the same generic question buys one answer three times.
 **Needs:** `stages.prove.state = done`, a pushed branch whose head equals `stages.prove.head`, a PR body with the Proof ledger section non-empty, and `shop.config.json` with `autoMergeOnPass` false or absent (if true, refuse under S6).
-**Produces:** the round directory `.4-brain-out/<date>-pr<N>/round-<n>/` with `verdict.json`, and the two reviews at the paths `verdict.json` names in `codex.reviewFile` and `grok.reviewFile`, both of which must exist; a PR comment with PASS or BLOCK, the major count, one line per major, and the class-rule answers if BLOCK; and `stages.gate` with `round`, `majors`, `head`, `runner`, `concurrency`. The PR Gate line also states the runner: `three-wide runner: not_built; review-loop3.sh, concurrency 1` until Plan 3 lands.
+**Produces:** the round directory `.4-brain-out/<date>-pr<N>/round-<n>/` with `verdict.json`, and the three reviews at the paths `verdict.json` names in `codex.reviewFile`, `grok.reviewFile` and `gemini.reviewFile`, all of which must exist; a PR comment with PASS or BLOCK, the major count, one line per major, and the class-rule answers if BLOCK; and `stages.gate` with `round`, `majors`, `head`, `runner`, `concurrency`. The PR Gate line also states the runner: `three-wide runner: not_built; review-loop3.sh, concurrency 1` until Plan 3 lands. A reviewer that cannot run is recorded by name in `stages.gate.missing` and said out loud, never silently dropped.
 **Owner reads:** PASS or BLOCK, the major count, one sentence per major.
 **Stop:** S3, S4, S6.
 
-How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile` and `grok.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
+How: the runner (Plan 3) dispatches up to three PRs at once, each lane with its own `DATABASE_URL_TEST`, with auto-merge off. Until it lands, `review-loop3.sh` one at a time, which never merges. Read the reviews at the paths in `verdict.json`'s `codex.reviewFile`, `grok.reviewFile` and `gemini.reviewFile`, never a `.md` by name: a round directory is reused. Compare `verdict.head` to the live PR head before acting on any finding; if they differ, the round is about a different commit and does not count.
 
-On BLOCK: read Codex's findings as they land and begin the class rule on them. Edit nothing until both reviews are in against the same head. Then answer the four class-rule questions in the PR comment, fix every finding in the round (majors and minors), then Prove again (which marks Gate `stale` and re-runs), then Gate again.
+Ask Gemini for its negative result explicitly, in the prompt: "if there is no other instance of this, say so and say what you searched." Its value is as much the sweep that found nothing as the finding, and without that instruction a silent report reads like a pass.
+
+A reviewer's verdict is adjudicated, never obeyed. **A finding about code the diff does not touch is real and is filed, not fixed here**, so it does not count toward the round's majors and does not hold the PR. Gemini's breadth lens finds these most often by design, since it is looking outside the diff on purpose; treating its BLOCK as authoritative would stall every PR on pre-existing debt.
+
+On BLOCK: read each reviewer's findings as they land and begin the class rule on them. Edit nothing until all three reviews are in against the same head. Then answer the four class-rule questions in the PR comment, fix every in-scope finding in the round (majors and minors), then Prove again (which marks Gate `stale` and re-runs), then Gate again.
 
 ## 6. See it
 

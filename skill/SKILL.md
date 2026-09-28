@@ -7,15 +7,15 @@ description: Run a change through the owner’s eight-stage delivery process (Pl
 
 the owner’s stack, after gstack, for an owner who reads evidence and not code.
 
-**Announce at start:** "Running Dstack, stage: <stage>." Then echo the brains, one line: `codex <ver> / gemini <ver> / grok <ver>, models per CLI defaults`.
+**Announce at start:** "Running Dstack, stage: <stage>." Then echo the brains, one line: `claude opus-5.5 / codex <ver> (review gpt-6-astra, build gpt-5.6-sol) / gemini <ver> / grok <ver>`. Codex reviews on Astra (from `~/.codex/config.toml`) and builds on Sol (pinned by `/codex-build`). If anything does not match, say so before Build or Gate.
 
 ## The principle
 
 The owner never reads code. They read evidence. Every stage turns a change into a **claim**, a **proof** of that claim, and an **independent verdict** on it, in plain language, on the pull request itself.
 
-If a stage cannot produce evidence they can read, it is not finished. If a stage is skipped, the state file records it and the PR body's Stages block says so, with their yes beside it.
+A stage that cannot produce evidence they can read is not finished. A skipped stage is recorded in the state file and in the PR body's Stages block, with their yes beside it.
 
-The owner is one named person, read from `owner.name` in the project's `dstack.config.json`. If that file is missing or the key is unset, every stage that needs a yes stops and says so. Dstack never guesses who is allowed to approve a change.
+The owner is one named person, from `owner.name` in the project's `dstack.config.json`. Missing file or unset key: every stage needing a yes stops and says so. Dstack never guesses who may approve a change.
 
 ## The state file
 
@@ -39,7 +39,7 @@ Every stage reads and writes `.dstack/state.json` at the lane root; Intake creat
       }
     }
 
-Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_applicable`, `not_built`, `unknown`, `stale`. A `skipped` entry carries `"owner_yes": "<iso>"` or it is invalid. Whenever the plan file or the branch head changes, every stage after the one that changed it is set to `stale` and must run again. `codex_review` on the plan entry is `APPROVED` or `skipped`; the plan itself is `done` only with `owner_yes`.
+Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_applicable`, `not_built`, `unknown`, `stale`. A `skipped` entry carries `"owner_yes": "<iso>"` or it is invalid. Whenever the plan file or the branch head changes, every stage after the one that changed it is set to `stale` and must run again. The plan entry's `codex_review` is `APPROVED` or `skipped`, and the plan is `done` only with `owner_yes`.
 
 `/dstack` with no argument prints the state file as a table and names the next stage.
 
@@ -53,7 +53,7 @@ Allowed `state` values: `pending`, `done`, `pass`, `block`, `skipped`, `not_appl
 | 2 | Plan | `/dstack plan` | Claude writes, Codex reviews, the owner says yes | the plan and its review log, committed | the claim, the acceptance criteria, the named flows |
 | 3 | Build | `/dstack build` | Codex at medium effort | a diff and Codex's report | nothing |
 | 4 | Prove | `/dstack prove` | Claude | the proof ledger, the commit, the pushed branch, the PR with its evidence body | "N guarantees, N seen to fail, on <sha>" |
-| 5 | Gate | `/dstack gate` | Codex at xhigh + Grok in parallel, Claude adjudicates | verdict and two reviews, one PR comment | PASS or BLOCK, one line per major |
+| 5 | Gate | `/dstack gate` | Codex at xhigh + Grok + Gemini in parallel, Claude adjudicates | verdict and three reviews, one PR comment | PASS or BLOCK, one line per major |
 | 6 | See it | `/dstack see` | a real browser, Gemini judges, Claude adjudicates | screenshots and pass or fail per named flow | the screenshots |
 | 7 | Ship | `/dstack ship` | the owner says merge, Claude merges | a merge, then ticket, email and deploy outcomes as separate states | one row per PR |
 | 8 | Watch | `/dstack watch` | automated, then Claude | a deploy report | one line per deploy |
@@ -74,7 +74,7 @@ Canonical. `references/stages.md` carries this block verbatim under the same hea
 
 ## What may be skipped
 
-Exactly these, and each is recorded in the state file and in the PR Stages block:
+Exactly these, each recorded in the state file and the PR Stages block:
 
 - Plan's Codex review, for a change under twenty lines: `codex_review: skipped` with `owner_yes`. The plan is still `done`.
 - See it, when the diff touches nothing under `client/`: `not_applicable`, which needs no yes.
@@ -83,11 +83,13 @@ Nothing else may be skipped. Pre-flight refuses.
 
 ## Who builds, and when Claude may
 
-Codex builds from the frozen plan. Claude writes code only when `/codex-build`'s two fix rounds are spent, and then the state file records `"by": "claude", "reason": "codex fix rounds spent"` and the PR Stages block says the same.
+Codex builds from the frozen plan. Claude writes code only once `/codex-build`'s two fix rounds are spent, and then the state file and the PR Stages block both record `"by": "claude", "reason": "codex fix rounds spent"`.
 
 ## Reviews land before edits begin
 
-During Gate, read Codex's findings as soon as they arrive and start the class rule on them. Do not edit a file until both reviews have landed against the same `verdict.head`. The class rule needs every finding to name the class.
+During Gate, read each reviewer's findings as they arrive and start the class rule on them. Edit no file until all three reviews land against the same `verdict.head`. The class rule needs every finding to name its class.
+
+Three deliberately different lenses: Codex on correctness, Grok on the real operator, Gemini on breadth ("is this defect somewhere else too"). A verdict is adjudicated, never obeyed: **a finding about code the diff does not touch is filed, not fixed here.** `references/stages.md` carries the rest.
 
 ## The class rule
 
@@ -95,14 +97,14 @@ Before fixing any finding from any reviewer, read `references/class-rule.md` and
 
 ## What each PR carries
 
-Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the body, never the diff. Pre-delivery for Prove, Gate, See it and Ship verifies the body has every section with content.
+Every Dstack PR body follows `references/pr-evidence.md`. The owner reads the body, never the diff. Pre-delivery for Prove, Gate, See it and Ship verifies every section has content.
 
 ## Tools this routes to
 
 - Plan: `/grill-me-codex` when the design is open, `/codex-review` when it is not, with `PLAN_FILE` under `docs/superpowers/plans/`.
-- Build: `/codex-build` with `SPEC_FILE` set to the plan file, the build invocation carrying `-c model_reasoning_effort="medium"`.
+- Build: `/codex-build` with `SPEC_FILE` set to the plan file, invoked with `-m gpt-5.6-sol -c model_reasoning_effort="medium"` (never Astra).
 - Prove: `scripts/ci/mutate.cjs` in the repo (Plan 2). Until it lands, `C:/tmp/mutate.py`, and the state records `"tool"`.
-- Gate: `scripts/agent-bridge/gate-pr.cjs` via the runner (Plan 3). Until it lands, `review-loop3.sh` one PR at a time; the state records `"runner_available": false`, and the PR Gate line says `three-wide runner: not_built; review-loop3.sh, concurrency 1`.
+- Gate: `scripts/agent-bridge/gate-pr.cjs` via the runner (Plan 3). Until it lands, `review-loop3.sh` one PR at a time, the state records `"runner_available": false`, and the PR Gate line says `three-wide runner: not_built; review-loop3.sh, concurrency 1`.
 - See it: `scripts/ci/see-it.cjs` (Plan 4). Until it lands, `not_built` with note `UI claims are on a source guard only`, which goes into the PR Stages block.
 - Ship: `gh pr merge --squash --match-head-commit <full sha>` after S5 and S6 hold.
 - Watch: `scripts/ci/deploy-watch.cjs` (Plan 5). Until it lands, `not_built` with note `deploy is unwatched; treat as unknown`, into the merge report. Silence means unknown, never green.
