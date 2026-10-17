@@ -83,8 +83,9 @@
         "effort": "high"
       },
       "max": {
-        "effort": "xhigh"
-      }
+        "effort": "high"
+      },
+      "$comment_max": "The top rung is high, not xhigh. On 2026-10-17 the owner retired xhigh after GPT-6 Astra at xhigh drained the Codex usage allowance; OpenAI's own guidance is that higher effort uses more of the allowance and does not always give a better result. Codex itself runs GPT-6.1 Sol (model = \"gpt-6.1-sol\", model_reasoning_effort = \"medium\" in ~/.codex/config.toml), which scores 55.1% on Terminal-Bench 4.0 at about $1.72 a task against Astra's 59.6% at $9.58 (Vals AI, 2026-10-16). max and deep now spend the same effort; they still differ in which surfaces and stages reach them. Do not raise any tier above high without the owner asking."
     },
     "weights": {
       "blast_radius": 1.4,
@@ -198,7 +199,7 @@
           "deep",
           "max"
         ],
-        "$comment": "A CLI on a subscription, so it has no per token price. First in the list, so it is the pick wherever it serves the tier and nothing priced does, unless a stage pins another model."
+        "$comment": "A CLI on a subscription, so it has no per token price. First in the list, so it is the pick wherever it serves the tier and nothing priced does, unless a stage pins another model. The model is whatever ~/.codex/config.toml names (gpt-6.1-sol at medium since 2026-10-17); the tier only sets the effort passed with -c model_reasoning_effort."
       },
       "gemini": {
         "provider": "cli",

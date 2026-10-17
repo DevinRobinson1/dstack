@@ -70,7 +70,7 @@ How:
 
 ## 5. Gate
 
-**Who:** Codex (config default, xhigh), Grok, and Gemini, in parallel, on the diff. Claude adjudicates.
+**Who:** Codex (the config default: GPT-6.1 Sol at medium effort; a routed gate may raise one review to high, never above), Grok, and Gemini, in parallel, on the diff. Claude adjudicates.
 
 Three lenses, and the assignment is the point: Codex on code-path correctness, Grok on whether this works for a real operator and what breaks on deploy, Gemini on breadth, meaning "is this defect somewhere else too". Ask all three the same generic question and you pay three times for one answer.
 
